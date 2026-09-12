@@ -1,0 +1,65 @@
+// Data-driven level config. Tuned for ~30s levels.
+// movement: 'free' | 'slots' | 'duo' (duo = 2 ports, shared command)
+export const LEVELS = [
+  {
+    id: 1, name: 'FIRST BOOT', sub: 'free movement — outrun the hand',
+    movement: 'free',
+    time: 30, missesToWin: 5,
+    rail: { min: 90, max: 870 },
+    player: { w: 66, h: 26, accel: 4600, maxSpeed: 560, friction: 9 },
+    enemy: { trackTime: 1.25, lockTime: 0.85, strikeTime: 0.22, recoverTime: 0.95,
+             trackSpeed: 330, lead: 0.18, plugW: 46, startDelay: 0.8, doubles: 0 },
+    hands: [{ startDelay: 0.8 }], // per-hand overrides of `enemy` (stagger, strength)
+    slots: [160, 320, 480, 640, 800],
+  },
+  {
+    id: 2, name: 'CORNERED', sub: 'teleport between port slots — Q/E or ←/→ or tap',
+    movement: 'slots',
+    time: 32, missesToWin: 7,
+    rail: { min: 90, max: 870 },
+    player: { w: 66, h: 26, hopCooldown: 0.16 },
+    enemy: { trackTime: 0.9, lockTime: 0.55, strikeTime: 0.18, recoverTime: 0.62,
+             trackSpeed: 430, lead: 0.32, plugW: 46, startDelay: 0.6, doubles: 0.35 },
+    hands: [{ startDelay: 0.6 }],
+    slots: [150, 305, 480, 655, 810],
+  },
+  {
+    id: 3, name: 'DOUBLE TROUBLE', sub: 'experiment: two ports, one command — keep at least one alive',
+    movement: 'duo',
+    time: 40, missesToWin: 8,
+    rail: { min: 90, max: 870 },
+    player: { w: 60, h: 24, accel: 4600, maxSpeed: 560, friction: 9 },
+    enemy: { trackTime: 0.95, lockTime: 0.6, strikeTime: 0.18, recoverTime: 0.6,
+             trackSpeed: 460, lead: 0.3, plugW: 48, startDelay: 0.6, doubles: 0.45 },
+    hands: [{ startDelay: 0.6 }],
+    slots: [160, 320, 480, 640, 800],
+  },
+  {
+    id: 4, name: 'TWO HANDS', sub: 'two ports, two humans — lose one and BOTH hands hunt the survivor',
+    movement: 'duo',
+    time: 42, missesToWin: 10,
+    rail: { min: 90, max: 870 },
+    player: { w: 60, h: 24, accel: 4600, maxSpeed: 560, friction: 9 },
+    enemy: { trackTime: 0.95, lockTime: 0.62, strikeTime: 0.18, recoverTime: 0.62,
+             trackSpeed: 450, lead: 0.3, plugW: 56, startDelay: 0.8, doubles: 0.25 },
+    hands: [
+      { startDelay: 0.8 },
+      { startDelay: 2.4, trackSpeed: 420, lockTime: 0.7 }, // second human: later, lazier, harder to bait both at once
+    ],
+    blocker: { kind: 'rail', frac: 0.2, warn: 1.0, dur: 4.5, gap: 5 },
+    slots: [160, 320, 480, 640, 800],
+  },
+  {
+    id: 5, name: 'BLACKOUT', sub: 'the crosshairs cut out — read the hand, not the marker',
+    movement: 'slots',
+    time: 40, missesToWin: 8,
+    rail: { min: 90, max: 870 },
+    player: { w: 66, h: 26, hopCooldown: 0.16 },
+    enemy: { trackTime: 0.9, lockTime: 0.65, strikeTime: 0.18, recoverTime: 0.62,
+             trackSpeed: 420, lead: 0.32, plugW: 62, startDelay: 0.6, doubles: 0.3,
+             blackout: 0.3 },
+    hands: [{ startDelay: 0.6 }],
+    blocker: { kind: 'slot', warn: 1.2, dur: 5, gap: 5.5 },
+    slots: [150, 305, 480, 655, 810],
+  },
+];

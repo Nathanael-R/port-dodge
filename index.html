@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>USB DODGE — a tiny game about not getting plugged</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="wrap">
+  <div id="topbar">
+    <div id="logo">USB<span>DODGE</span></div>
+    <div id="hud" class="hidden">
+      <div class="pill" id="hud-level">LEVEL 1</div>
+      <div class="pill" id="hud-time">30.0s</div>
+      <div class="pill" id="hud-miss">MISSES 0/5</div>
+      <div class="pill ports" id="hud-ports"></div>
+      <div class="pill" id="hud-flip" style="display:none">⟲ +1</div>
+    </div>
+    <div id="topbtns">
+      <button id="btn-mute" title="Mute (M)">🔊</button>
+      <button id="btn-help" title="Help">?</button>
+    </div>
+  </div>
+  <div id="stage">
+    <div id="timebar" title="Time remaining"><div id="timefill"></div></div>
+    <canvas id="game" width="960" height="540"></canvas>
+    <div id="overlay"></div>
+  </div>
+  <div id="foot">A/D or ←/→ to move · Space to confirm · P pause · M mute</div>
+</div>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
