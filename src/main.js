@@ -100,7 +100,7 @@ function showMenu() {
       <li>Later humans fight dirty: crosshairs cut out, and chunks of the edge get barricaded.</li>
       <li>Survive the timer or force enough misses. One clean insertion = game over.</li>
     </ul>
-    <div class="btnrow"><button class="cta" data-act="start">▶ &nbsp;START LEVEL 1</button></div>
+    <div class="btnrow"><button class="cta" data-act="start">START LEVEL 1</button></div>
   </div>`);
 }
 function showIntro() {
@@ -121,7 +121,7 @@ function showEnd(win) {
   S.screen = win ? 'win' : 'lose';
   const last = S.levelIdx === LEVELS.length - 1;
   const c = cfg();
-  const title = win ? (last ? '🏆 YOU REMAIN UNPLUGGED' : '😮‍💨 DODGED!') : '🔌 PLUGGED IN';
+  const title = win ? (last ? 'YOU REMAIN UNPLUGGED' : 'DODGED!') : 'PLUGGED IN';
   const sub = win
     ? (last ? `You survived all ${LEVELS.length} prototype levels with ${S.misses} forced misses on the final. The humans are filing a bug report.` : `Level ${c.id} cleared — ${S.misses} misses forced in ${S.elapsed.toFixed(1)}s.${c.id === 3 ? ' 🎁 <b>FLIP-FLOP EARNED:</b> an upside-down extra life for what comes next!' : ''}`)
     : `The human got you after ${S.elapsed.toFixed(1)}s. It is updating its firmware out of spite.`;
@@ -155,10 +155,10 @@ function wireButtons() {
 // ---------- HUD ----------
 function updateHud() {
   const c = cfg();
-  elLevel.textContent = `LEVEL ${c.id} · ${c.name}`;
+  elLevel.textContent = `${c.id} · ${c.name}`;
   const remain = Math.max(0, c.time - S.elapsed);
   elTime.textContent = `${remain.toFixed(1)}s`;
-  elMiss.textContent = `MISSES ${'●'.repeat(S.misses)}${'○'.repeat(Math.max(0, c.missesToWin - S.misses))}`;
+  elMiss.textContent = `${'●'.repeat(S.misses)}${'○'.repeat(Math.max(0, c.missesToWin - S.misses))}`;
   elMiss.title = `${S.misses}/${c.missesToWin} forced misses`;
   elPorts.textContent = S.ports.map(p => p.alive ? '●' : '✕').join(' ');
   elPorts.style.color = S.ports.some(p => p.alive) ? '' : 'var(--warn)';
@@ -313,7 +313,7 @@ function playerUpdate(dt) {
   S.bumpCd = Math.max(0, S.bumpCd - dt);
 
   // global keys
-  if (framePressed.has('m')) { const m = toggleMute(); document.getElementById('btn-mute').textContent = m ? '🔇' : '🔊'; }
+  if (framePressed.has('m')) { const m = toggleMute(); document.getElementById('btn-mute').classList.toggle('muted', m); }
   if (framePressed.has('p') || framePressed.has('escape')) togglePause();
   if (framePressed.has('r') && (S.screen === 'playing')) { resetLevel(S.levelIdx); S.banner = { str: 'RESET', sub: '', t: 0.6 }; }
 
@@ -494,11 +494,8 @@ function drawLaptop() {
   g.addColorStop(0, '#2b3350'); g.addColorStop(0.55, '#1c2338'); g.addColorStop(1, '#141a2c');
   ctx.fillStyle = g;
   rr(0, -20, W, EDGE_Y + 20, 0); ctx.fill();
-  // lid highlight + fake keyboard hints
-  ctx.fillStyle = 'rgba(255,255,255,.05)'; ctx.fillRect(0, 8, W, 3);
-  ctx.fillStyle = 'rgba(255,255,255,.045)';
-  for (let i = 0; i < 6; i++) ctx.fillRect(60 + i * 140, 40, 90, 10);
-  ctx.fillStyle = 'rgba(255,255,255,.05)'; ctx.fillRect(60, 60, 840, 26);
+  // lid highlight
+  ctx.fillStyle = 'rgba(255,255,255,.06)'; ctx.fillRect(0, 8, W, 3);
   // brand dot + text
   ctx.fillStyle = '#4dd8ff'; ctx.font = '800 15px "Segoe UI",sans-serif'; ctx.textAlign = 'left';
   ctx.fillText(flavor.brand, 24, 30);
@@ -835,7 +832,7 @@ function frame(now) {
 
 // ---------- chrome ----------
 document.getElementById('btn-mute').onclick = (e) => {
-  const m = toggleMute(); e.target.textContent = m ? '🔇' : '🔊'; sfx.ui();
+  const m = toggleMute(); e.currentTarget.classList.toggle('muted', m); sfx.ui();
 };
 document.getElementById('btn-help').onclick = () => showMenu();
 document.addEventListener('visibilitychange', () => {
@@ -850,8 +847,8 @@ window.addEventListener('pointerdown', () => { if (S.screen === 'playing' && S.p
   if (OS !== 'mac' && OS !== 'windows' && OS !== 'linux') OS = 'windows'; // 'other' gets the classic look
   document.body.dataset.os = OS;
   flavor = osCopy(OS);
-  const foot = document.getElementById('foot');
-  if (foot) foot.textContent = 'A/D or ←/→ to move · Space to confirm · P pause · M mute' + (flavor.foot ? ' · ' + flavor.foot : '');
+  const footOs = document.getElementById('foot-os');
+  if (footOs && flavor.foot) footOs.textContent = flavor.foot;
 }
 resetLevel(0);
 const startLevel = Math.max(1, Math.min(LEVELS.length, parseInt(QS.get('level') || '1', 10))) - 1;
