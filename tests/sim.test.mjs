@@ -3,7 +3,7 @@
 // These prove the core design claims: attacks can land, and perfect play can win.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { LEVELS } from '../src/levels.js';
+import { LEVELS, buildEndlessRound, endlessClearBonus, SCORE } from '../src/levels.js';
 import {
   createEnemy, stepEnemy, separateEnemies, stepFree, hopSlot, resolveStrike,
   levelWon, botAxisFreeMulti, botSlotDirMulti, strikeLockout, absorbHit,
@@ -13,8 +13,7 @@ import {
 const DT = 1 / 60;
 const NO_DOUBLES = () => 0.5; // roll above every level's `doubles` chance
 
-function setup(idx) {
-  const cfg = LEVELS[idx];
+function setup(cfg) {
   const rail = cfg.rail;
   let ports, center = { x: 480, vx: 0 }, slot = 2, hopCd = 0;
   if (cfg.movement === 'slots') {
@@ -45,16 +44,21 @@ function nearestAlive(ports, x) {
 // policy: 'bot' (same as ?bot=1) or 'still' (never moves — must lose)
 // opts.deadStart: index of a port that begins the sim already plugged (wall test)
 // opts.shield: start with the FLIP-FLOP extra life held
-function simLevel(idx, { policy = 'bot', roll = NO_DOUBLES, deadStart = -1, shield = false } = {}) {
-  const s = setup(idx);
-  const { cfg, rail, ports, enemies, blocker } = s;
+function simLevel(idx, opts = {}) {
+  return simLevelFromCfg(LEVELS[idx], opts);
+}
+
+function simLevelFromCfg(cfg, { policy = 'bot', roll = NO_DOUBLES, deadStart = -1, shield = false } = {}) {
+  const s = setup(cfg);
+  const { rail, ports, enemies, blocker } = s;
   let { center, slot, hopCd } = s;
   if (deadStart >= 0 && ports[deadStart]) {
     ports[deadStart].alive = false;
     ports[deadStart].stuckX = ports[deadStart].x;
   }
-  let elapsed = 0, misses = 0, impacts = 0, minWallGap = Infinity;
-  let flip = shield, invuln = 0;
+  let elapsed = 0, misses = 0, nears = 0, score = 0, impacts = 0, minWallGap = Infinity;
+  let flip = shield, invuln = 0, lastStrike = null;
+  const strikes = [];
 
   while (true) {
     elapsed += DT;
@@ -125,30 +129,34 @@ function simLevel(idx, { policy = 'bot', roll = NO_DOUBLES, deadStart = -1, shie
       }
     }
 
-    if (!ports.some(p => p.alive)) return { won: false, elapsed, misses, impacts, minWallGap, reason: 'all-dead' };
+    if (!ports.some(p => p.alive)) return { won: false, elapsed, misses, nears, score, impacts, minWallGap, lastStrike, strikes, reason: 'all-dead' };
     for (const E of enemies) {
       const focus = nearestAlive(ports, E.x);
       for (const ev of stepEnemy(E, DT, { x: focus.x, v: focus.vx || 0 }, cfg, roll)) {
         if (ev !== 'impact') continue;
         impacts++;
+        lastStrike = { t: +elapsed.toFixed(2), locked: Math.round(E.lockedX), at: Math.round(focus.x),
+          fist: Math.round(E.x), blackout: !!E.blackout, alive: ports.filter(p => p.alive).map(p => Math.round(p.x)) };
         const out = resolveStrike(E.lockedX, (E.ep || cfg.enemy).plugW, ports);
+        strikes.push({ ...lastStrike, out });
         if (out === 'hit') {
           const res = absorbHit({ shield: flip, invuln });
           if (res === 'shielded') { flip = false; invuln = 1.0; }
           else if (res === 'dead') {
             const v = nearestAlive(ports, E.lockedX);
             v.alive = false; v.stuckX = v.x; // corpse becomes a wall for duo survivors
-            if (!ports.some(p => p.alive)) return { won: false, elapsed, misses, impacts, minWallGap, shieldLeft: flip, reason: 'all-dead' };
+            if (!ports.some(p => p.alive)) return { won: false, elapsed, misses, nears, score, impacts, minWallGap, lastStrike, strikes, shieldLeft: flip, reason: 'all-dead' };
           }
         } else {
           misses++;
+          if (out === 'near') { nears++; score += SCORE.NEAR; } else score += SCORE.MISS;
           E.doubleQueued = roll() < (E.ep || cfg.enemy).doubles;
         }
       }
     }
-    if (levelWon(elapsed, misses, cfg)) return { won: true, elapsed, misses, impacts, minWallGap, shieldLeft: flip };
+    if (levelWon(elapsed, misses, cfg)) return { won: true, elapsed, misses, nears, score, impacts, minWallGap, shieldLeft: flip };
     separateEnemies(enemies, rail, DT);
-    if (elapsed > 180) return { won: false, elapsed, misses, impacts, minWallGap, shieldLeft: flip, reason: 'timeout' };
+    if (elapsed > 180) return { won: false, elapsed, misses, nears, score, impacts, minWallGap, shieldLeft: flip, reason: 'timeout' };
   }
 }
 
@@ -313,13 +321,14 @@ test('blackout: each lock rolls the crosshair cut-out', () => {
 
 test('blackout bot reads the hand, not the hidden marker', () => {
   const slots = LEVELS[4].slots; // [150, 305, 480, 655, 810], bot on slot 2 (480)
-  // lock is secretly on slot 3 (655) but the crosshair is out and the fist
-  // still sits far left (150): judge by the fist -> the safe side is right
-  const dir = botSlotDirMulti(2, slots, [{ x: 655, hx: 150, state: 'lock', blackout: true }]);
-  assert.equal(dir, 1);
-  // same geometry with the crosshair live: the real target (655) rules -> run left
-  const dir2 = botSlotDirMulti(2, slots, [{ x: 655, hx: 150, state: 'lock', blackout: false }]);
-  assert.equal(dir2, -1);
+  // fist sits ON the bot but the lock is secretly far left (150): with the
+  // crosshair out the bot must flee the fist -> steps left to 305
+  const dir = botSlotDirMulti(2, slots, [{ x: 150, hx: 480, state: 'lock', blackout: true }]);
+  assert.equal(dir, -1);
+  // same geometry with the crosshair live: the real target (150) is 330px away,
+  // safely outside the sit-tight margin -> hold still
+  const dir2 = botSlotDirMulti(2, slots, [{ x: 150, hx: 480, state: 'lock', blackout: false }]);
+  assert.equal(dir2, 0);
 });
 
 test('pushOutOfZone: inside gets shoved to the nearest edge, outside untouched', () => {
@@ -352,6 +361,30 @@ test('stepBlocker: idle -> warn -> solid -> idle, seizing only free slots', () =
   assert.equal(B.phase, 'idle');
 });
 
+test('stepBlocker never seizes an edge camper\'s sole exit', () => {
+  const bc = { kind: 'slot', warn: 1.0, dur: 5, gap: 4 };
+  const slots = [150, 305, 480, 655, 810];
+  // camper welded to the right edge: slot 3 must stay open across many rolls
+  for (let k = 0; k < 20; k++) {
+    const B = createBlocker(bc);
+    const occ = (i) => i === 4;
+    let guard = 0;
+    while (B.phase !== 'warn' && guard++ < 5000) stepBlocker(B, DT, bc, null, slots, occ, () => k / 20);
+    assert.notEqual(B.slot, 3, `roll ${k}/20 seized the only exit`);
+    assert.notEqual(B.slot, 4, `roll ${k}/20 seized the camper`);
+  }
+  // mid-rail camper: every free slot is fair game (it always has an exit)
+  const seen = new Set();
+  for (let k = 0; k < 20; k++) {
+    const B = createBlocker(bc);
+    const occ = (i) => i === 2;
+    let guard = 0;
+    while (B.phase !== 'warn' && guard++ < 5000) stepBlocker(B, DT, bc, null, slots, occ, () => (k + 0.5) / 20);
+    seen.add(B.slot);
+  }
+  assert.ok(seen.size >= 3, `mid camper should see varied seizures, got ${[...seen]}`);
+});
+
 test('stepBlocker ejects a camper seized mid-stay', () => {
   const bc = { kind: 'slot', warn: 0.2, dur: 5, gap: 99 };
   const B = createBlocker(bc);
@@ -375,4 +408,68 @@ test('L5: standing still gets plugged', () => {
   const r = simLevel(4, { policy: 'still' });
   assert.equal(r.won, false);
   assert.equal(r.reason, 'all-dead');
+});
+
+test('endless rounds cycle the five archetypes', () => {
+  const moves = [1, 2, 3, 4, 5].map(n => buildEndlessRound(n).movement);
+  assert.deepEqual(moves, ['free', 'slots', 'duo', 'duo', 'slots']);
+  assert.equal(buildEndlessRound(1).id, 1);
+  assert.equal(buildEndlessRound(6).name, 'FIRST BOOT +1');
+  assert.equal(buildEndlessRound(6).missesToWin, LEVELS[0].missesToWin + 1);
+});
+
+test('endless scaling ramps up and respects caps', () => {
+  const r1 = buildEndlessRound(1), r6 = buildEndlessRound(6);
+  assert.ok(r6.enemy.trackSpeed > r1.enemy.trackSpeed, 'faster hands');
+  assert.ok(r6.enemy.lockTime < r1.enemy.lockTime, 'shorter telegraphs');
+  assert.ok(r6.enemy.doubles >= r1.enemy.doubles, 'more double-jabs');
+  for (const n of [100, 250, 500]) {
+    const r = buildEndlessRound(n);
+    const base = LEVELS[(n - 1) % 5]; // same archetype this round repeats
+    assert.ok(r.enemy.trackSpeed <= base.enemy.trackSpeed * 1.6 + 1e-9, `round ${n} speed cap`);
+    assert.ok(r.enemy.lockTime >= 0.42, `round ${n} lock floor`);
+    assert.ok(r.enemy.doubles <= 0.6, `round ${n} doubles cap`);
+    assert.ok(r.enemy.blackout <= 0.5, `round ${n} blackout cap`);
+    assert.ok(r.enemy.plugW <= 70, `round ${n} plug cap`);
+    assert.ok(r.hands.length <= (r.movement === 'slots' ? 2 : 3), `round ${n} hands cap`);
+    assert.ok(r.missesToWin <= base.missesToWin + 3, `round ${n} quota cap`);
+  }
+});
+
+test('endless hands and blockers grow with loops', () => {
+  assert.equal(buildEndlessRound(1).hands.length, 1);
+  assert.equal(buildEndlessRound(6).hands.length, 2, 'second hand joins at loop 1');
+  assert.equal(buildEndlessRound(16).hands.length, 3, 'third hand joins at loop 3');
+  assert.equal(buildEndlessRound(2).hands.length, 1, 'slots stays single at loop 0');
+  assert.equal(buildEndlessRound(12).hands.length, 2, 'slots gets a partner at loop 2');
+  assert.equal(buildEndlessRound(1).blocker, null);
+  assert.equal(buildEndlessRound(11).blocker?.kind, 'rail', 'blockers spread everywhere at loop 2');
+  assert.equal(buildEndlessRound(12).blocker?.kind, 'slot');
+});
+
+test('endless clear bonus grows per round', () => {
+  assert.equal(endlessClearBonus(1), 500);
+  assert.equal(endlessClearBonus(4), 800);
+});
+
+test('endless: skilled play clears the first ten rounds', () => {
+  for (let n = 1; n <= 10; n++) {
+    const r = simLevelFromCfg(buildEndlessRound(n), { policy: 'bot' });
+    assert.equal(r.won, true, `round ${n}: ${JSON.stringify(r)}`);
+  }
+});
+
+test('endless: standing still dies on rounds 1 and 6', () => {
+  for (const n of [1, 6]) {
+    const r = simLevelFromCfg(buildEndlessRound(n), { policy: 'still' });
+    assert.equal(r.won, false, `round ${n}`);
+    assert.equal(r.reason, 'all-dead', `round ${n}`);
+  }
+});
+
+test('endless scoring matches the books: 100/miss, 150/near', () => {
+  const r = simLevelFromCfg(buildEndlessRound(2), { policy: 'bot' });
+  assert.equal(r.won, true);
+  assert.equal(r.score, (r.misses - r.nears) * SCORE.MISS + r.nears * SCORE.NEAR);
+  assert.ok(r.score > 0);
 });

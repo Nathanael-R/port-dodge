@@ -1,61 +1,60 @@
-// Central input: keyboard state + edge-triggered presses + pointer for drag/tap.
-export function createInput(canvas) {
-  const keys = new Set();
-  const pressed = new Set(); // edge-triggered, consumed each frame
-  const state = {
-    axis: 0,          // -1..1 horizontal intent
-    pointerX: null,   // logical x when dragging
-    pointerActive: false,
-    tappedSlot: -1,
-  };
-
-  function axisFromKeys() {
-    let a = 0;
-    if (keys.has('arrowleft') || keys.has('a')) a -= 1;
-    if (keys.has('arrowright') || keys.has('d')) a += 1;
-    // also allow up/down keys? no — horizontal rail game
-    return a;
+// One primary pointer, held movement, and buffered taps between simulation frames.
+export function createInput(canvas, onInput = () => {}) {
+  const keys = new Set(), pressed = new Set();
+  const state = { axis: 0, pointerX: null, pointerActive: false };
+  let pointerId = null, pointerRect = null, tapX = null, touchAxis = 0;
+  function updateAxis() {
+    state.axis = touchAxis || (Number(keys.has('arrowright') || keys.has('d')) - Number(keys.has('arrowleft') || keys.has('a')));
   }
-
-  window.addEventListener('keydown', (e) => {
-    const k = e.key.toLowerCase();
-    if (['arrowleft','arrowright','arrowup','arrowdown',' '].includes(k)) e.preventDefault();
-    if (!e.repeat) pressed.add(k === ' ' ? 'space' : k);
-    keys.add(k === ' ' ? 'space' : k);
-    state.axis = axisFromKeys();
-  });
-  window.addEventListener('keyup', (e) => {
-    const k = e.key.toLowerCase();
-    keys.delete(k === ' ' ? 'space' : k);
-    state.axis = axisFromKeys();
-  });
-  window.addEventListener('blur', () => { keys.clear(); state.axis = 0; });
-
-  // Pointer: drag to move (free mode), tap slots (teleport mode).
-  // Convert client coords -> logical 960x540.
-  function toLogical(e) {
-    const r = canvas.getBoundingClientRect();
-    const cx = (e.touches ? e.touches[0].clientX : e.clientX);
-    return { x: (cx - r.left) / r.width * 960, y: 0 };
+  function reset() {
+    keys.clear(); pressed.clear(); touchAxis = 0; state.axis = 0;
+    if (pointerId !== null && canvas.hasPointerCapture?.(pointerId)) canvas.releasePointerCapture(pointerId);
+    pointerId = null; pointerRect = null; tapX = null;
+    state.pointerX = null; state.pointerActive = false;
   }
-  canvas.addEventListener('pointerdown', (e) => {
+  window.addEventListener('keydown', e => {
+    const key = e.key.toLowerCase(), normalized = key === ' ' ? 'space' : key;
+    if (['arrowleft','arrowright','arrowup','arrowdown',' '].includes(key) && e.target?.tagName !== 'BUTTON') e.preventDefault();
+    if (!e.repeat) pressed.add(normalized);
+    keys.add(normalized); updateAxis(); onInput();
+  });
+  window.addEventListener('keyup', e => {
+    const key = e.key.toLowerCase(); keys.delete(key === ' ' ? 'space' : key);
+    updateAxis(); onInput();
+  });
+  window.addEventListener('blur', reset);
+  window.addEventListener('resize', reset);
+  canvas.addEventListener('pointerdown', e => {
+    if (e.isPrimary === false || (e.button != null && e.button !== 0) || pointerId !== null) return;
+    pointerId = e.pointerId ?? 0; pointerRect = canvas.getBoundingClientRect();
     state.pointerActive = true;
-    state.pointerX = toLogical(e).x;
-    canvas.setPointerCapture?.(e.pointerId);
+    state.pointerX = (e.clientX - pointerRect.left) / pointerRect.width * 960;
+    tapX = state.pointerX;
+    canvas.setPointerCapture?.(pointerId); onInput();
   });
-  canvas.addEventListener('pointermove', (e) => {
-    if (state.pointerActive) state.pointerX = toLogical(e).x;
+  canvas.addEventListener('pointermove', e => {
+    if (!state.pointerActive || (e.pointerId ?? 0) !== pointerId) return;
+    state.pointerX = (e.clientX - pointerRect.left) / pointerRect.width * 960;
   });
-  const up = () => { state.pointerActive = false; state.pointerX = null; };
-  canvas.addEventListener('pointerup', up);
-  canvas.addEventListener('pointercancel', up);
-
+  function release(e, cancelled) {
+    if ((e.pointerId ?? 0) !== pointerId) return;
+    pointerId = null; pointerRect = null;
+    state.pointerActive = false; state.pointerX = null;
+    if (cancelled) tapX = null;
+  }
+  canvas.addEventListener('pointerup', e => release(e, false));
+  canvas.addEventListener('pointercancel', e => release(e, true));
+  canvas.addEventListener('lostpointercapture', e => release(e, true));
   return {
-    state, keys,
-    consume(framePressed) {
-      for (const k of pressed) framePressed.add(k);
-      pressed.clear();
+    state, keys, reset,
+    consume(framePressed) { for (const key of pressed) framePressed.add(key); pressed.clear(); },
+    consumeTap() { const x = tapX; tapX = null; return x; },
+    tap(x) { tapX = x; onInput(); },
+    holdDirection(direction) {
+      touchAxis = direction;
+      pressed.add(direction < 0 ? 'arrowleft' : 'arrowright');
+      updateAxis(); onInput();
     },
-    endFrame() {},
+    releaseDirection() { touchAxis = 0; updateAxis(); },
   };
 }

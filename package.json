@@ -5,7 +5,7 @@
   "description": "USB DODGE — a tiny arcade game about being a USB port that refuses to get plugged.",
   "type": "module",
   "scripts": {
-    "test": "node --test \"tests/logic.test.mjs\" \"tests/sim.test.mjs\" \"tests/os.test.mjs\"",
+    "test": "node --test \"tests/logic.test.mjs\" \"tests/sim.test.mjs\" \"tests/os.test.mjs\" \"tests/ui.test.mjs\" \"tests/runtime.test.mjs\" \"tests/audio.test.mjs\"",
     "serve": "python -m http.server 8099"
   }
 }

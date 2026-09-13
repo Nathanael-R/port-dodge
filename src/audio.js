@@ -1,15 +1,23 @@
 // Tiny procedural audio: no assets, WebAudio oscillators + noise buffer.
 let ctx = null, master = null, muted = false;
+const noiseBuffers = new Map();
 
 function ensure() {
   if (ctx) return true;
   try {
     ctx = new (window.AudioContext || window.webkitAudioContext)();
     master = ctx.createGain();
-    master.gain.value = 0.35;
+    master.gain.value = muted ? 0 : 0.35;
     master.connect(ctx.destination);
     return true;
   } catch { return false; }
+}
+export function unlockAudio() {
+  if (muted || !ensure()) return;
+  if (ctx.state === 'suspended' || ctx.state === 'interrupted') ctx.resume().catch(() => {});
+}
+export function suspendAudio() {
+  if (ctx?.state === 'running') ctx.suspend().catch(() => {});
 }
 export function isMuted() { return muted; }
 export function toggleMute() { muted = !muted; if (master) master.gain.value = muted ? 0 : 0.35; return muted; }
@@ -21,26 +29,34 @@ function env(g, t0, a, peak, d) {
 }
 function tone(freq, dur = 0.1, type = 'square', vol = 0.5, slideTo = null, delay = 0) {
   if (muted || !ensure()) return;
-  if (ctx.state === 'suspended') ctx.resume();
+  // Resuming is handled directly by a user gesture, including on mobile Safari.
+  if (ctx.state !== 'running') return;
   const t0 = ctx.currentTime + delay;
   const o = ctx.createOscillator(), g = ctx.createGain();
   o.type = type; o.frequency.setValueAtTime(freq, t0);
   if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t0 + dur);
   env(g, t0, 0.005, vol, dur);
   o.connect(g); g.connect(master);
+  o.onended = () => { o.disconnect(); g.disconnect(); };
   o.start(t0); o.stop(t0 + dur + 0.05);
 }
 function noise(dur = 0.2, vol = 0.4, filterFreq = 1200, delay = 0) {
   if (muted || !ensure()) return;
   const t0 = ctx.currentTime + delay;
-  const len = Math.floor(ctx.sampleRate * dur);
-  const buf = ctx.createBuffer(1, len, ctx.sampleRate);
-  const d = buf.getChannelData(0);
-  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+  if (ctx.state !== 'running') return;
+  let buf = noiseBuffers.get(dur);
+  if (!buf) {
+    const len = Math.floor(ctx.sampleRate * dur);
+    buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    noiseBuffers.set(dur, buf);
+  }
   const src = ctx.createBufferSource(); src.buffer = buf;
   const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = filterFreq; f.Q.value = 0.8;
   const g = ctx.createGain(); env(g, t0, 0.004, vol, dur);
   src.connect(f); f.connect(g); g.connect(master);
+  src.onended = () => { src.disconnect(); f.disconnect(); g.disconnect(); };
   src.start(t0);
 }
 

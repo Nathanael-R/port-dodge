@@ -63,3 +63,57 @@ export const LEVELS = [
     slots: [150, 305, 480, 655, 810],
   },
 ];
+
+// --- endless mode: the 5 archetypes on repeat, meaner every round ---
+export const ENDLESS_ORDER = [0, 1, 2, 3, 4]; // base LEVELS indices, cycled
+export const SCORE = { MISS: 100, NEAR: 150 };
+export function endlessClearBonus(round) { return 500 + 100 * (round - 1); }
+
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+// Round configs are plain level configs, so the game loop, bot, and sims
+// consume them untouched. `round` is 1-based.
+export function buildEndlessRound(round) {
+  const base = LEVELS[ENDLESS_ORDER[(round - 1) % ENDLESS_ORDER.length]];
+  const loop = Math.floor((round - 1) / ENDLESS_ORDER.length); // full cycles completed
+  const k = round - 1; // continuous ramp
+  const e = { ...base.enemy };
+  e.trackSpeed = Math.min(e.trackSpeed * 1.6, e.trackSpeed * (1 + 0.05 * k));
+  e.lockTime = Math.max(0.42, e.lockTime * (1 - 0.03 * k));
+  e.strikeTime = Math.max(0.14, e.strikeTime - 0.005 * k);
+  e.recoverTime = Math.max(0.4, e.recoverTime * (1 - 0.04 * k));
+  e.lead = Math.min(0.45, e.lead + 0.01 * k);
+  e.doubles = Math.min(0.6, e.doubles + 0.04 * k);
+  e.blackout = base.enemy.blackout
+    ? Math.min(0.5, base.enemy.blackout + 0.03 * k)
+    : (loop >= 1 ? Math.min(0.3, 0.05 + 0.05 * (loop - 1)) : 0);
+  e.plugW = Math.min(70, e.plugW + 2 * loop);
+  // extra hands join at higher loops (hard cap keeps it readable)
+  const baseHands = base.hands || [{}];
+  const wantHands = Math.min(base.movement === 'slots' ? 2 : 3,
+    baseHands.length + (loop >= 1 ? 1 : 0) + (loop >= 3 ? 1 : 0));
+  const hands = baseHands.map(h => ({ ...h }));
+  while (hands.length < wantHands) {
+    hands.push({ startDelay: 1.2 + hands.length, trackSpeed: Math.round(e.trackSpeed * 0.95) });
+  }
+  // blockers spread to every archetype from loop 1, and intensify
+  let blocker = base.blocker ? { ...base.blocker } : null;
+  if (blocker) {
+    if (blocker.gap != null) blocker.gap = Math.max(2.5, blocker.gap - 0.3 * loop);
+    if (blocker.dur != null) blocker.dur = Math.min(blocker.dur + 3, blocker.dur + 0.5 * loop);
+    if (blocker.frac != null) blocker.frac = Math.min(0.3, blocker.frac + 0.02 * loop);
+  } else if (loop >= 2) {
+    blocker = base.movement === 'slots'
+      ? { kind: 'slot', warn: 1.2, dur: 4, gap: 6 }
+      : { kind: 'rail', frac: 0.15, warn: 1.0, dur: 4, gap: 6 };
+  }
+  return {
+    ...base,
+    id: round,
+    name: base.name + (loop > 0 ? ` +${loop}` : ''),
+    enemy: e,
+    hands,
+    blocker,
+    missesToWin: base.missesToWin + Math.min(loop, 3),
+  };
+}

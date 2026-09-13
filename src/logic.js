@@ -117,6 +117,9 @@ export function botAxisFreeMulti(portX, threats, rail, blocker = null) {
   const pos = (t) => (t.blackout && t.state === 'lock' ? (t.hx ?? t.x) : t.x);
   const active = threats.filter(t => t.state === 'lock' || t.state === 'strike');
   if (!active.length) {
+    // drift mid-rail while merely tracked, but hold ground through recover:
+    // wandering back to center is exactly what a queued double-jab wants
+    if (threats.some(t => t.state === 'recover')) return 0;
     const d = (rail.min + rail.max) / 2 - portX;
     if (Math.abs(d) < 40) return 0;
     return Math.sign(d) * 0.5;
@@ -145,6 +148,12 @@ export function botSlotDirMulti(slot, slots, threats, blocked = -1) {
   const pos = (t) => (t.blackout && t.state === 'lock' ? (t.hx ?? t.x) : t.x);
   const active = threats.filter(t => t.state === 'lock');
   if (!active.length) return 0;
+  // Sit tight when already safe: from an edge slot the only move is inward,
+  // and blindly hopping on a timer walks straight into strikes. SAFE clears
+  // the widest possible hit window (~48px) with 2x margin.
+  const SAFE = 100;
+  const here = Math.min(...active.map(t => Math.abs(slots[slot] - pos(t))));
+  if (here > SAFE) return 0;
   const opts = [slot - 1, slot + 1].filter(i => i >= 0 && i < slots.length && i !== blocked);
   if (!opts.length) return 0;
   let best = opts[0], bd = -1;
@@ -193,7 +202,14 @@ export function stepBlocker(B, dt, bc, rail, slots, isOccupied, roll = Math.rand
       B.x = rail.min + B.w / 2 + roll() * (rail.max - rail.min - B.w);
     } else {
       const free = slots.map((_, i) => i).filter(i => !isOccupied(i));
-      const pool = free.length ? free : slots.map((_, i) => i);
+      // trap-proofing: never seize an edge slot's SOLE exit while it's camped
+      // (occupant on slot 0 needs slot 1, occupant on last needs second-to-last).
+      // Mid-rail campers always have an exit, so only edges are protected.
+      const occ = slots.findIndex((_, i) => isOccupied(i));
+      let pool = free;
+      if (occ === 0) pool = free.filter(i => i !== 1);
+      else if (occ === slots.length - 1) pool = free.filter(i => i !== slots.length - 2);
+      if (!pool.length) pool = free.length ? free : slots.map((_, i) => i);
       B.slot = pool[Math.floor(roll() * pool.length)];
     }
     B.phase = 'warn'; B.t = bc.warn; ev.push('warn');

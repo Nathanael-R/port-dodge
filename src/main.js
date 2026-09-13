@@ -1,12 +1,28 @@
+import { createFrameScheduler, canvasSize } from './runtime.js';
+import { drawUSBStick, drawUSBPort } from './usb-art.js';
 import { createInput } from './input.js';
-import { sfx, toggleMute, isMuted } from './audio.js';
+import { sfx, toggleMute, unlockAudio, suspendAudio } from './audio.js';
 import { detectOS, osCopy } from './os.js';
-import { LEVELS } from './levels.js';
+import { LEVELS, buildEndlessRound, endlessClearBonus, SCORE } from './levels.js';
 import { W, H, EDGE_Y, resolveStrike, hopSlot, levelWon, stepFree, createEnemy, stepEnemy, separateEnemies, botAxisFreeMulti, botSlotDirMulti, strikeLockout, absorbHit, applyDeadWalls, createBlocker, stepBlocker, pushOutOfZone, safestSlot } from './logic.js';
-import { createFX } from './fx.js';
+import { createFX, createNearMissSlowMo } from './fx.js';
 
 const canvas = document.getElementById('game');
-const ctx = canvas.getContext('2d');
+let ctx = canvas.getContext('2d', { alpha: false });
+let scheduler;
+function wake() { if (!document.hidden) scheduler?.wake(); }
+let stageBackdrop;
+let vignette;
+function resizeCanvas() {
+  const size = canvasSize(canvas.getBoundingClientRect().width, devicePixelRatio || 1);
+  if (canvas.width !== size.width || canvas.height !== size.height) {
+    canvas.width = size.width; canvas.height = size.height;
+    ctx.setTransform(size.width / W, 0, 0, size.height / H, 0, 0);
+    frame.screen = null; vignette = null;
+  }
+  wake();
+}
+window.addEventListener('resize', resizeCanvas);
 const overlay = document.getElementById('overlay');
 const hud = document.getElementById('hud');
 const elLevel = document.getElementById('hud-level');
@@ -14,8 +30,15 @@ const elTime = document.getElementById('hud-time');
 const elMiss = document.getElementById('hud-miss');
 const elPorts = document.getElementById('hud-ports');
 
-const input = createInput(canvas);
-const fx = createFX();
+const input = createInput(canvas, wake);
+const motionPreference = matchMedia('(prefers-reduced-motion: reduce)');
+const fx = createFX(() => motionPreference.matches);
+const nearMissSlowMo = createNearMissSlowMo(() => motionPreference.matches);
+const elScore = document.getElementById('hud-score');
+const elFlip = document.getElementById('hud-flip');
+const fill = document.getElementById('timefill');
+const pauseButton = document.getElementById('btn-pause');
+function setText(el, value) { if (el.textContent !== value) el.textContent = value; }
 
 // OS flavor: real detection with a preview override (?os=mac|windows|linux).
 // Drives the laptop art, footer joke, and CSS theme via body[data-os].
@@ -26,7 +49,12 @@ let flavor = osCopy(OS);
 const S = {
   screen: 'menu', // menu | intro | playing | win | lose | done | paused(from)
   paused: false,
+  mode: 'levels', // 'levels' | 'endless'
   levelIdx: 0,
+  customCfg: null, // endless rounds build configs on the fly; cfg() prefers it
+  round: 0,       // endless round number (1-based while running)
+  score: 0,       // run score (both modes: +100/miss, +150/near, clear bonus)
+  scoreAtStart: 0, // score when the current level/round began (retry rolls back here)
   elapsed: 0,
   misses: 0,
   ports: [],       // {x,vx,w,h,alive,slot,stuckX,squash,face}
@@ -38,19 +66,34 @@ const S = {
   tickAcc: 0,
   bumpCd: 0,       // cooldown for dead-wall bump feedback
   denyCd: 0,       // cooldown for teleport-deny feedback
-  flipLife: false, // FLIP-FLOP extra life: earned by clearing level 3, absorbs one plug
+    flipLife: false, // FLIP-FLOP extra life: earned by clearing level 3, absorbs one plug
+  flipEarned: false, // set when endless awards a flip; announced on the next round banner
   invuln: 0,       // phase-out timer granted when the flip-life is consumed
   blocker: null,   // territory denial: {phase, t, x, w, slot} or null when level has none
   result: null,
 };
-let prePause = 'playing';
+let transitionTimer;
+let hudProgressKey;
+const touchControls = document.getElementById("touch-controls");
+const slotButtons = [...document.querySelectorAll("[data-slot]")];
+const touchHint = document.getElementById("touch-hint");
+let controlMode;
+let controlSlot = -1;
+const levelMarkers = [...document.querySelectorAll(".level-track > span")];
 
-function cfg() { return LEVELS[S.levelIdx]; }
+function cfg() { return S.customCfg || LEVELS[S.levelIdx]; }
 
 // ---------- setup ----------
 function resetLevel(idx) {
   S.levelIdx = idx;
-  const c = cfg();
+  S.customCfg = null;
+  setupRound(LEVELS[idx]);
+}
+
+function setupRound(c) {
+  clearTimeout(transitionTimer);
+  input.reset();
+  S.paused = false; fx.reset(); nearMissSlowMo.resetAttempt();
   S.elapsed = 0; S.misses = 0; S.dents = []; S.banner = null; S.flash = 0;
   S.center = { x: 480, vx: 0 };
   S.ports = [];
@@ -84,23 +127,36 @@ const restTipY = () => 330;
 const contactTipY = () => EDGE_Y + 14;
 
 // ---------- overlay screens ----------
-function show(html) { overlay.innerHTML = html; overlay.style.pointerEvents = 'auto'; overlay.classList.add('dim'); wireButtons(); }
-function hide() { overlay.innerHTML = ''; overlay.style.pointerEvents = 'none'; overlay.classList.remove('dim'); }
-
+function show(html) {
+  wake(); input.reset();
+  overlay.innerHTML = html; overlay.style.pointerEvents = 'auto'; overlay.classList.add('dim');
+  document.getElementById('stage').classList.add('has-overlay');
+  document.body.classList.remove('in-game');
+  resizeCanvas();
+  wireButtons();
+  const card = overlay.querySelector('.card');
+  if (card) { card.setAttribute('role', 'dialog'); card.setAttribute('aria-modal', 'true'); card.setAttribute('aria-label', card.querySelector('h1,h2')?.innerText || 'Game menu'); }
+  overlay.querySelector('.cta')?.focus({ preventScroll: true });
+}
+function hide() {
+  wake(); input.reset();
+  overlay.innerHTML = ''; overlay.style.pointerEvents = 'none'; overlay.classList.remove('dim');
+  document.getElementById('stage').classList.remove('has-overlay');
+  document.body.classList.add('in-game');
+  resizeCanvas();
+  canvas.focus({ preventScroll: true });
+}
 function showMenu() {
-  S.screen = 'menu'; hud.classList.add('hidden');
-  show(`<div class="card flash">
-    <div class="tag">PLAYABLE PROTOTYPE</div>
-    <h1>USB <em>DODGE</em></h1>
-    <p class="big">You are a USB port. A human hand is trying to plug into you. Be somewhere else.</p>
-    <ul class="howto">
-      <li><span class="kbd">A</span><span class="kbd">D</span> or <span class="kbd">←</span><span class="kbd">→</span> — slide along the laptop edge (drag works too)</li>
-      <li>Level 2: hop between glowing slots with <span class="kbd">←</span><span class="kbd">→</span> / tap</li>
-      <li>Red marker + rising tick = attack incoming. It <b>locks</b> — then it can't steer. Trick it.</li>
-      <li>Later humans fight dirty: crosshairs cut out, and chunks of the edge get barricaded.</li>
-      <li>Survive the timer or force enough misses. One clean insertion = game over.</li>
-    </ul>
-    <div class="btnrow"><button class="cta" data-act="start">START LEVEL 1</button></div>
+  resetLevel(0);
+  S.paused = false; S.mode = 'levels'; S.screen = 'menu'; hud.classList.add('hidden');
+  const best = loadBest();
+  show(`<div class="card menu-card flash">
+    <div class="tag"><span class="status-dot"></span> SMALL PORT. BIG ATTITUDE.</div>
+    <h1>Stay<br><em>unplugged.</em></h1>
+    <p class="big">You're the USB port.<br>The human needs a connection. You need space.</p>
+    <div class="btnrow"><button class="cta" data-act="start">Let's dodge <span>→</span></button><button class="ghost" data-act="endless">∞ Endless</button></div>
+    <div class="menu-meta">5 levels of connection issues <span>•</span> ${best ? `Best endless: ${best.toLocaleString()}` : 'Zero cables attached'}</div>
+    <div class="quick-guide"><span><b>01</b> Bait the hand</span><span><b>02</b> Wait for red</span><span><b>03</b> Get out of there</span></div>
   </div>`);
 }
 function showIntro() {
@@ -119,15 +175,20 @@ function showIntro() {
 }
 function showEnd(win) {
   S.screen = win ? 'win' : 'lose';
-  const last = S.levelIdx === LEVELS.length - 1;
   const c = cfg();
+  if (S.mode === 'endless' && !win) return showEndlessGameOver();
+  if (S.mode === 'endless' && win) { startNextRound(); return; } // safety: endless advances without cards
+  const last = S.levelIdx === LEVELS.length - 1;
   const title = win ? (last ? 'YOU REMAIN UNPLUGGED' : 'DODGED!') : 'PLUGGED IN';
   const sub = win
-    ? (last ? `You survived all ${LEVELS.length} prototype levels with ${S.misses} forced misses on the final. The humans are filing a bug report.` : `Level ${c.id} cleared — ${S.misses} misses forced in ${S.elapsed.toFixed(1)}s.${c.id === 3 ? ' 🎁 <b>FLIP-FLOP EARNED:</b> an upside-down extra life for what comes next!' : ''}`)
-    : `The human got you after ${S.elapsed.toFixed(1)}s. It is updating its firmware out of spite.`;
-  show(`<div class="card flash">
-    <div class="tag">${win ? 'LEVEL CLEAR' : 'PORT LOST'} — LEVEL ${c.id}: ${c.name}</div>
+    ? (last ? 'Five levels. Zero commitment. The humans are filing a bug report.' : `Connection avoided. Ready for the next human?${c.id === 3 ? ' FLIP-FLOP earned: your next plug is on the house.' : ''}`)
+    : 'The human finally made a connection. Make it work harder next time.';
+  show(`<div class="card result-card flash">
+    <div class="result-icon ${win ? 'won' : 'lost'}" aria-hidden="true">${win ? '✓' : '×'}</div>
+    <div class="tag">${win ? 'LEVEL CLEAR' : 'PORT LOST'} · LEVEL ${c.id}</div>
     <h2>${title}</h2><p class="big">${sub}</p>
+    <div class="result-stats"><div><strong>${S.score.toLocaleString()}</strong><span>RUN SCORE</span></div><div><strong>${S.misses}</strong><span>DODGES</span></div><div><strong>${S.elapsed.toFixed(1)}<small>s</small></strong><span>SURVIVED</span></div></div>
+    ${win ? `<p class="bonus">+${endlessClearBonus(S.levelIdx + 1)} level clear bonus</p>` : ''}
     <div class="btnrow">
       ${win && !last ? `<button class="cta" data-act="next">NEXT LEVEL →</button>` : ''}
       ${win && last ? `<button class="cta" data-act="menu">BACK TO MENU</button>` : ''}
@@ -140,37 +201,157 @@ function wireButtons() {
     b.onclick = () => {
       sfx.ui();
       const a = b.dataset.act;
-      if (a === 'start') { S.flipLife = false; resetLevel(0); showIntro(); }
+      if (a === 'start') { S.mode = 'levels'; S.flipLife = false; S.score = 0; resetLevel(0); snapshotScore(); showIntro(); }
       else if (a === 'play') { hide(); S.screen = 'playing'; S.banner = { str: 'DODGE!', sub: '', t: 0.9 }; }
-      else if (a === 'retry') { hide(); resetLevel(S.levelIdx); S.screen = 'playing'; S.banner = { str: 'AGAIN!', sub: '', t: 0.8 }; }
+      else if (a === 'retry') doRetry();
+      else if (a === 'endless') showEndlessIntro();
+      else if (a === 'endless-go') { hide(); startEndless(); }
       else if (a === 'next') {
+        S.mode = 'levels';
         if (S.levelIdx === 2) S.flipLife = true; // cleared all three: FLIP-FLOP earned!
-        resetLevel(S.levelIdx + 1); showIntro();
+        resetLevel(S.levelIdx + 1); snapshotScore(); showIntro();
       }
       else if (a === 'menu') showMenu();
     };
   });
 }
 
+// ---------- endless mode ----------
+function loadBest() {
+  try { return parseInt(localStorage.getItem('usbDodgeBest') || '0', 10) || 0; }
+  catch { return 0; }
+}
+function saveBest(v) {
+  try { localStorage.setItem('usbDodgeBest', String(v)); } catch { /* private mode etc. */ }
+}
+
+function showEndlessIntro() {
+  S.screen = 'intro'; hud.classList.add('hidden');
+  const best = loadBest();
+  show(`<div class="card flash">
+    <div class="tag">♾️ ENDLESS MODE</div>
+    <h2>HOW LONG CAN YOU STAY UNPLUGGED?</h2>
+    <p class="big">All five challenges on repeat — free slide, slots, duo, two hands, blackout — meaner every round: faster hands, shorter telegraphs, extra hands, spreading barricades.</p>
+    <ul class="howto">
+      <li>Miss forced: <b>+${SCORE.MISS}</b> · near-miss: <b>+${SCORE.NEAR}</b> · round clear: <b>500+</b></li>
+      <li>Every 3rd round clears a <b>⟲ FLIP-FLOP</b> extra life (if you don't hold one)</li>
+      <li>Run ends when every port is plugged. Best score lives on this machine.</li>
+    </ul>
+    ${best > 0 ? `<p>BEST: <b>${best}</b> pts — beat it.</p>` : ''}
+    <div class="btnrow"><button class="cta" data-act="endless-go">START RUN</button><button class="ghost" data-act="menu">MENU</button></div>
+  </div>`);
+}
+
+function startEndless() {
+  S.mode = 'endless';
+  S.round = 0; S.score = 0; S.flipLife = false;
+  snapshotScore();
+  hud.classList.remove('hidden');
+  startNextRound();
+}
+
+function roundTags(c) {
+  const tags = [];
+  const hands = (c.hands || [{}]).length;
+  if (hands > 1) tags.push(`${hands} HANDS`);
+  const bo = c.enemy.blackout || 0;
+  if (bo > 0) tags.push(`blackout ${Math.round(bo * 100)}%`);
+  if (c.blocker) tags.push(c.blocker.kind === 'slot' ? 'seized slots' : 'barricades');
+  if (c.enemy.doubles >= 0.4) tags.push('double-jabs');
+  return tags.join(' · ');
+}
+
+function startNextRound() {
+  S.round++;
+  S.customCfg = buildEndlessRound(S.round);
+  S.levelIdx = (S.round - 1) % LEVELS.length;
+  setupRound(S.customCfg);
+  snapshotScore();
+  S.screen = 'playing';
+  const c = cfg();
+  const tags = roundTags(c) + (S.flipEarned ? (roundTags(c) ? ' · ' : '') + '+FLIP' : '');
+  S.flipEarned = false;
+  S.banner = { str: `ROUND ${S.round}`, sub: `${c.name}${tags ? ' — ' + tags : ''}`, t: 2.2 };
+  updateHud();
+}
+
+function awardRoundClear() {
+  const bonus = endlessClearBonus(S.round);
+  S.score += bonus;
+  if (S.round % 3 === 0) {
+    if (!S.flipLife) { S.flipLife = true; S.flipEarned = true; }
+    else S.score += 250;
+  }
+}
+
+// Levels-mode clear bonus: same formula, level number as the round.
+function awardLevelClear() {
+  S.score += endlessClearBonus(S.levelIdx + 1);
+}
+
+// Roll score back to the start of the current level/round (fair retry).
+function snapshotScore() { S.scoreAtStart = S.score; }
+
+function doRetry() {
+  hide();
+  if (S.mode === 'endless') startEndless();
+  else { S.score = S.scoreAtStart; resetLevel(S.levelIdx); S.screen = 'playing'; S.banner = { str: 'AGAIN!', sub: '', t: 0.8 }; }
+}
+
+function showEndlessGameOver() {
+  S.screen = 'lose';
+  const best = loadBest();
+  const newBest = S.score > best;
+  if (newBest) saveBest(S.score);
+  show(`<div class="card flash">
+    <div class="tag">RUN OVER — ROUND ${S.round}: ${cfg().name}</div>
+    <h2>Finally connected.</h2>
+    <p class="big">The humans finally got you.${newBest ? ' <b>NEW BEST!</b>' : ''}</p>
+    <p>SCORE <b>${S.score}</b> · BEST <b>${Math.max(best, S.score)}</b> · reached round <b>${S.round}</b></p>
+    <div class="btnrow">
+      <button class="cta" data-act="retry">↻ NEW RUN (R)</button>
+      <button class="ghost" data-act="menu">MENU</button>
+    </div></div>`);
+}
+
 // ---------- HUD ----------
 function updateHud() {
   const c = cfg();
-  elLevel.textContent = `${c.id} · ${c.name}`;
+  if (controlMode !== c.movement) {
+    controlMode = c.movement;
+    touchControls.dataset.mode = c.movement === 'slots' ? 'slots' : 'slide';
+    touchHint.textContent = c.movement === 'slots' ? 'Tap a slot before the strike.' : 'Drag to slide, or hold an arrow.';
+  }
+  const currentSlot = c.movement === 'slots' ? S.ports[0]?.slot : -1;
+  if (controlSlot !== currentSlot) {
+    controlSlot = currentSlot;
+    slotButtons.forEach((button, i) => button.setAttribute('aria-pressed', String(i === currentSlot)));
+  }
+  const progressKey = `${S.mode}:${S.levelIdx}`;
+  if (hudProgressKey !== progressKey) {
+    hudProgressKey = progressKey;
+    levelMarkers.forEach((el, i) => {
+      el.classList.toggle('active', i === S.levelIdx && S.mode === 'levels');
+      el.classList.toggle('complete', S.mode === 'levels' && i < S.levelIdx);
+      if (i === S.levelIdx && S.mode === 'levels') el.setAttribute('aria-current', 'step');
+      else el.removeAttribute('aria-current');
+    });
+  }
+  setText(elLevel, S.mode === 'endless' ? `R${S.round} · ${c.name}` : `${c.id} · ${c.name}`);
+  setText(elScore, S.score.toLocaleString());
   const remain = Math.max(0, c.time - S.elapsed);
-  elTime.textContent = `${remain.toFixed(1)}s`;
-  elMiss.textContent = `${'●'.repeat(S.misses)}${'○'.repeat(Math.max(0, c.missesToWin - S.misses))}`;
+  setText(elTime, `${remain.toFixed(1)}s`);
+  setText(elMiss, `${S.misses} / ${c.missesToWin}`);
   elMiss.title = `${S.misses}/${c.missesToWin} forced misses`;
-  elPorts.textContent = S.ports.map(p => p.alive ? '●' : '✕').join(' ');
+  setText(elPorts, S.ports.map(p => p.alive ? '●' : '✕').join(' '));
   elPorts.style.color = S.ports.some(p => p.alive) ? '' : 'var(--warn)';
-  const elFlip = document.getElementById('hud-flip');
   if (elFlip) {
     elFlip.style.display = S.flipLife ? '' : 'none';
     elFlip.textContent = S.invuln > 0 ? '⟲ phased…' : '⟲ +1 FLIP';
   }
-  const fill = document.getElementById('timefill');
   if (fill) {
     const frac = Math.max(0, Math.min(1, remain / c.time));
-    fill.style.width = `${frac * 100}%`;
+    fill.style.transform = `scaleX(${frac.toFixed(4)})`;
     fill.classList.toggle('low', remain < 6 && S.screen === 'playing');
   }
 }
@@ -181,13 +362,12 @@ function updateHud() {
 function enemyUpdate(dt) {
   const c = cfg();
   for (const E of S.enemies) {
-    const alivePorts = S.ports.filter(p => p.alive);
-    // a hand with nothing left to hunt just loiters where it is
-    const focus = alivePorts.length
-      ? alivePorts.reduce((a, b) => Math.abs(a.x - E.x) < Math.abs(b.x - E.x) ? a : b)
-      : { x: E.x, vx: 0 };
+    let focus = null;
+    for (const port of S.ports) {
+      if (port.alive && (!focus || Math.abs(port.x - E.x) < Math.abs(focus.x - E.x))) focus = port;
+    }
 
-    const ev = stepEnemy(E, dt, { x: focus.x, v: focus.vx || 0 }, c);
+    const ev = stepEnemy(E, dt, { x: focus?.x ?? E.x, v: focus?.vx || 0 }, c);
     for (const e of ev) {
       if (e === 'locked') { sfx.lock(); S.tickAcc = 0; }
       if (e === 'struck') sfx.whoosh();
@@ -252,7 +432,7 @@ function impact(E) {
     // (enemy already back in 'recover' — stepEnemy transitioned before emitting 'impact')
     if (!remaining) {
       sfx.lose();
-      setTimeout(() => showEnd(false), 650);
+      transitionTimer = setTimeout(() => { if (S.screen === 'lose-pending') showEnd(false); }, 650);
       S.screen = 'lose-pending';
     } else {
       const walled = cfg().movement === 'duo';
@@ -260,13 +440,15 @@ function impact(E) {
     }
   } else {
     S.misses++;
+    S.score += outcome === 'near' ? SCORE.NEAR : SCORE.MISS;
     S.dents.push({ x: E.lockedX, t: 0 });
     if (outcome === 'near') {
-      fx.text(E.lockedX, 300, 'CLOSE!! +miss', '#7bff9e', 26, 1.0);
+      fx.text(E.lockedX, 300, `CLOSE!! +${SCORE.NEAR}`, '#7bff9e', 26, 1.0);
       sfx.nearMiss();
-      fx.stop(0.06); fx.addShake(7);
+      if (!levelWon(S.elapsed, S.misses, c)) nearMissSlowMo.trigger();
+      fx.addShake(7);
     } else {
-      fx.text(E.lockedX, 310, 'MISS!', '#4dd8ff', 22, 0.8);
+      fx.text(E.lockedX, 310, `MISS! +${SCORE.MISS}`, '#4dd8ff', 22, 0.8);
       fx.addShake(6);
     }
     fx.sparks(E.lockedX, EDGE_Y + 8);
@@ -274,9 +456,16 @@ function impact(E) {
     sfx.clang();
     E.doubleQueued = Math.random() < e.doubles;
     if (levelWon(S.elapsed, S.misses, c)) {
-      sfx.win();
-      S.screen = 'win-pending';
-      setTimeout(() => showEnd(true), 600);
+      if (S.mode === 'endless') {
+        awardRoundClear();
+        sfx.win();
+        S.screen = 'win-pending';
+        transitionTimer = setTimeout(() => { if (S.screen === 'win-pending') startNextRound(); }, 900);
+      } else {
+        awardLevelClear(); sfx.win();
+        S.screen = 'win-pending';
+        transitionTimer = setTimeout(() => { if (S.screen === 'win-pending') showEnd(true); }, 600);
+      }
     }
   }
   updateHud();
@@ -309,13 +498,9 @@ function blockerUpdate(dt) {
 const framePressed = new Set();
 function playerUpdate(dt) {
   const c = cfg();
-  input.consume(framePressed);
-  S.bumpCd = Math.max(0, S.bumpCd - dt);
+  const tapX = input.consumeTap();
 
-  // global keys
-  if (framePressed.has('m')) { const m = toggleMute(); document.getElementById('btn-mute').classList.toggle('muted', m); }
-  if (framePressed.has('p') || framePressed.has('escape')) togglePause();
-  if (framePressed.has('r') && (S.screen === 'playing')) { resetLevel(S.levelIdx); S.banner = { str: 'RESET', sub: '', t: 0.6 }; }
+  S.bumpCd = Math.max(0, S.bumpCd - dt);
 
   if (c.movement === 'slots') {
     const p = S.ports[0];
@@ -359,14 +544,13 @@ function playerUpdate(dt) {
       }
     }
     // pointer tap: jump to nearest slot
-    if (input.state.pointerActive && input.state.pointerX != null && p.hopCd <= 0) {
+    if (tapX != null && p.hopCd <= 0) {
       let best = 0, bd = Infinity;
-      c.slots.forEach((sx, i) => { const d = Math.abs(sx - input.state.pointerX); if (d < bd) { bd = d; best = i; } });
-      if (bd < 90) {
+      c.slots.forEach((sx, i) => { const d = Math.abs(sx - tapX); if (d < bd) { bd = d; best = i; } });
+      if (best >= 0) {
         if (locked) denyHop('TOO LATE!');
         else if (best === seized) denyHop('BLOCKED!');
         else if (best !== p.slot) { p.slot = best; p.x = c.slots[best]; p.hopCd = c.player.hopCooldown; p.squash = 1; fx.poof(p.x, EDGE_Y); sfx.hop(); }
-        input.state.pointerX = null; input.state.pointerActive = false;
       }
     }
     p.vx = 0;
@@ -382,9 +566,7 @@ function playerUpdate(dt) {
       else axis = 0;
     }
     S.center.vx = S.center.vx || 0;
-    const tmp = { x: S.center.x, vx: S.center.vx };
-    stepFree(tmp, axis, dt, { player: c.player, rail: c.rail });
-    S.center.x = tmp.x; S.center.vx = tmp.vx;
+    stepFree(S.center, axis, dt, c);
     if (c.movement === 'duo') {
       for (const p of S.ports) {
         if (!p.alive) continue;
@@ -432,8 +614,8 @@ function playerUpdate(dt) {
 function togglePause() {
   if (S.screen !== 'playing' && !S.paused) return;
   S.paused = !S.paused;
-  if (S.paused) { prePause = S.screen; S.screen = 'paused';
-    show(`<div class="card"><div class="tag">PAUSED</div><h2>Take a breath.</h2><p>The human waits. It is patient. It is wrong.</p><div class="btnrow"><button class="cta" data-act="resume">RESUME</button></div></div>`);
+  if (S.paused) { S.screen = 'paused';
+    show(`<div class="card"><div class="tag">PAUSED</div><h2>Take a breath.</h2><p>The human can wait.</p><p>Move with A / D or ← / →, or drag the port.<br>In slot levels, tap a slot or press 1–5.<br>Wait for the red lock, then dodge before the strike.</p><div class="btnrow"><button class="cta" data-act="resume">RESUME</button></div></div>`);
     overlay.querySelector('[data-act="resume"]').onclick = () => { sfx.ui(); hide(); S.paused = false; S.screen = 'playing'; };
   } else { hide(); S.screen = 'playing'; }
 }
@@ -446,18 +628,31 @@ function rr(x, y, w, h, r) {
 
 function draw() {
   ctx.save();
-  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#19221c'; ctx.fillRect(0, 0, W, H);
   ctx.translate(fx.shakeX, fx.shakeY);
 
+  if (!stageBackdrop) {
+    stageBackdrop = document.createElement('canvas'); stageBackdrop.width = W; stageBackdrop.height = H;
+    const liveContext = ctx; ctx = stageBackdrop.getContext('2d');
   // desk background
   const bg = ctx.createLinearGradient(0, 0, 0, H);
-  bg.addColorStop(0, '#0a0d16'); bg.addColorStop(0.32, '#0a0d16'); bg.addColorStop(0.33, '#131828'); bg.addColorStop(1, '#1a2033');
+  bg.addColorStop(0, '#19221c'); bg.addColorStop(0.32, '#19221c'); bg.addColorStop(0.33, '#232f26'); bg.addColorStop(1, '#29362b');
   ctx.fillStyle = bg; ctx.fillRect(-20, -20, W + 40, H + 40);
   // faint desk texture dots
   ctx.fillStyle = 'rgba(255,255,255,.03)';
   for (let x = 20; x < W; x += 48) for (let y = 220; y < H; y += 34) ctx.fillRect(x, y, 2, 2);
 
   drawLaptop();
+    ctx = liveContext;
+  }
+  ctx.drawImage(stageBackdrop, 0, 0);
+  if (S.screen === 'menu') {
+    ctx.save(); ctx.translate(755, 200); ctx.scale(2.2, 2.2); ctx.translate(-480, -(EDGE_Y - 8)); drawPorts(); ctx.restore();
+    ctx.save(); ctx.translate(755, 320); ctx.scale(1.65, 1.65); ctx.translate(-480, -330); drawEnemy(S.enemies[0]); ctx.restore();
+    ctx.fillStyle = '#d6fa72'; ctx.font = '700 11px "Segoe UI",sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('CONNECTION REFUSED.', 755, 90);
+    ctx.restore(); return;
+  }
   drawDents();
   if (cfg().movement === 'slots') drawSlots();
   drawBlocker();
@@ -476,22 +671,30 @@ function draw() {
     ctx.lineWidth = 8; ctx.strokeStyle = 'rgba(0,0,0,.75)';
     ctx.strokeText(S.banner.str, W / 2, 300);
     ctx.fillStyle = '#fff'; ctx.fillText(S.banner.str, W / 2, 300);
+    if (S.banner.sub) {
+      ctx.font = '700 17px "Segoe UI",system-ui,sans-serif';
+      ctx.lineWidth = 5;
+      ctx.strokeText(S.banner.sub, W / 2, 332);
+      ctx.fillStyle = '#9beaff'; ctx.fillText(S.banner.sub, W / 2, 332);
+    }
     ctx.globalAlpha = 1;
   }
   // red hit flash
   if (S.flash > 0) { ctx.fillStyle = `rgba(255,60,90,${S.flash * 0.35})`; ctx.fillRect(-20, -20, W + 40, H + 40); }
 
   // vignette
-  const v = ctx.createRadialGradient(W/2, H/2, 240, W/2, H/2, 560);
-  v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,.45)');
-  ctx.fillStyle = v; ctx.fillRect(-20, -20, W + 40, H + 40);
+  if (!vignette) {
+    vignette = ctx.createRadialGradient(W/2, H/2, 240, W/2, H/2, 560);
+    vignette.addColorStop(0, 'rgba(0,0,0,0)'); vignette.addColorStop(1, 'rgba(0,0,0,.45)');
+  }
+  ctx.fillStyle = vignette; ctx.fillRect(-20, -20, W + 40, H + 40);
   ctx.restore();
 }
 
 function drawLaptop() {
   // slab
   const g = ctx.createLinearGradient(0, 0, 0, EDGE_Y);
-  g.addColorStop(0, '#2b3350'); g.addColorStop(0.55, '#1c2338'); g.addColorStop(1, '#141a2c');
+  g.addColorStop(0, '#465247'); g.addColorStop(0.55, '#354136'); g.addColorStop(1, '#242e25');
   ctx.fillStyle = g;
   rr(0, -20, W, EDGE_Y + 20, 0); ctx.fill();
   // lid highlight
@@ -617,7 +820,7 @@ function drawPorts() {
       // plugged: dead socket + stuck plug stub + cable.
       // The hanging cable is a WALL — survivors can't cross it (see applyDeadWalls),
       // so mark it with hazard chevrons on the laptop edge.
-      ctx.fillStyle = '#10141f'; rr(px - 34, py, 68, p.h, 4); ctx.fill();
+      drawUSBPort(ctx, px, py, p.w, p.h, false);
       ctx.fillStyle = '#c7cede'; ctx.fillRect(px - 20, py - 2, 40, 10); // stuck shell
       ctx.fillStyle = '#ff5470'; ctx.fillRect(px - 20, py + 8, 40, 12);
       ctx.strokeStyle = '#ff5470'; ctx.lineWidth = 4;
@@ -634,35 +837,34 @@ function drawPorts() {
       ctx.restore();
       continue;
     }
-    const danger = S.enemies.some(E => E.state === 'lock' || E.state === 'strike');
-    const glow = danger ? 1 : 0.55;
-    ctx.shadowColor = '#4dd8ff'; ctx.shadowBlur = 14 * glow;
-    ctx.fillStyle = '#0d1322'; rr(px - 35, py - 2, 70, p.h + 4, 5); ctx.fill();
-    ctx.shadowBlur = 0;
-    // metal shell
-    const mg = ctx.createLinearGradient(0, py, 0, py + p.h);
-    mg.addColorStop(0, '#dfe6fa'); mg.addColorStop(0.5, '#9aa5c4'); mg.addColorStop(1, '#5d6784');
-    ctx.fillStyle = mg; rr(px - 33, py, 66, p.h, 4); ctx.fill();
-    ctx.fillStyle = '#20263c'; rr(px - 29, py + 4, 58, p.h - 8, 3); ctx.fill();
-    // blue tongue = "this is you"
-    ctx.fillStyle = '#1f6feb'; rr(px - 26, py + p.h - 12, 52, 7, 2); ctx.fill();
-    ctx.fillStyle = '#4dd8ff'; rr(px - 26, py + p.h - 12, 52, 2.5, 1); ctx.fill();
-    // eyes 👀 — the joke lands visually, restrained
-    const look = Math.max(-6, Math.min(6, (p.face || p.vx || 0) / 80));
-    ctx.fillStyle = '#fff';
-    ctx.beginPath(); ctx.arc(px - 10 + look, py + 9, 6, 0, Math.PI * 2); ctx.arc(px + 10 + look, py + 9, 6, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#0b0e18';
+    drawUSBPort(ctx, px, py, p.w, p.h);
     const locking = S.enemies.some(E => E.state === 'lock');
-    const fear = locking ? 1.6 : 2.4;
-    ctx.beginPath(); ctx.arc(px - 10 + look * 1.6, py + 9.5, fear, 0, Math.PI * 2); ctx.arc(px + 10 + look * 1.6, py + 9.5, fear, 0, Math.PI * 2); ctx.fill();
-    if (locking) { // worried mouth
-      ctx.strokeStyle = '#0b0e18'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(px, py + 18, 5, Math.PI * 1.15, Math.PI * 1.85); ctx.stroke();
+    // Fixed eye sockets, directional pupils: curious at rest, wide-eyed at lock.
+    const look = Math.max(-1.8, Math.min(1.8, (p.face || p.vx || 0) / 240));
+    const eyeY = py + 10, radius = locking ? 5.2 : 4.8;
+    for (const eyeX of [px - 9, px + 9]) {
+      ctx.fillStyle = '#030c07';
+      ctx.beginPath(); ctx.arc(eyeX, eyeY + .7, radius + .8, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#f3f5df';
+      ctx.beginPath(); ctx.arc(eyeX, eyeY, radius, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#123322';
+      ctx.beginPath(); ctx.arc(eyeX + look, eyeY + .4, locking ? 1.7 : 2.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.arc(eyeX + look - .6, eyeY - .5, .8, 0, Math.PI * 2); ctx.fill();
     }
+    // A small expression sits above the contacts without obscuring the hardware.
+    ctx.strokeStyle = '#a7d3b2'; ctx.lineWidth = 1.2; ctx.lineCap = 'round';
+    ctx.beginPath();
+    if (locking) {
+      ctx.moveTo(px - 2, py + 15); ctx.quadraticCurveTo(px, py + 13, px + 2, py + 15);
+    } else {
+      ctx.moveTo(px - 2, py + 14); ctx.quadraticCurveTo(px, py + 16, px + 2, py + 14);
+    }
+    ctx.stroke();
     // "YOU" tag + flip-life badge stay upright even when the port hangs upside-down
     ctx.restore();
     if (p.alive) {
-      ctx.fillStyle = '#4dd8ff'; ctx.font = '900 11px "Segoe UI",sans-serif'; ctx.textAlign = 'center';
+      ctx.fillStyle = '#d6fa72'; ctx.font = '900 11px "Segoe UI",sans-serif'; ctx.textAlign = 'center';
       ctx.fillText(flipped ? '⟲ YOU ⟲' : '◀ YOU ▶', px, py - 8);
     }
   }
@@ -683,7 +885,7 @@ function drawEnemy(E) {
   ctx.strokeStyle = '#232a44'; ctx.lineWidth = 6;
   ctx.beginPath(); ctx.moveTo(tipX + 46, H + 20); ctx.quadraticCurveTo(tipX + 40, handY + 190, tipX + 6, handY + 110); ctx.stroke();
 
-  const trem = E.state === 'lock' ? Math.sin(performance.now() / 30) * (2 + urgency * 4) : 0;
+  const trem = E.state === 'lock' && !motionPreference.matches ? Math.sin(performance.now() / 30) * (2 + urgency * 4) : 0;
   const hx = tipX + trem;
 
   // --- hand (big threatening mitt gripping the plug; sleeve exits frame bottom) ---
@@ -710,7 +912,7 @@ function drawEnemy(E) {
 
   // --- USB-A plug pointing UP at the laptop ---
   const pw = plugW, ph = plugH;
-  const px = hx - pw / 2, py = tipY;
+  const py = tipY;
   // speed lines on strike (at the sides so the fist stays readable)
   if (E.state === 'strike') {
     ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.lineWidth = 3;
@@ -718,18 +920,7 @@ function drawEnemy(E) {
       ctx.beginPath(); ctx.moveTo(sx, py + ph + 120); ctx.lineTo(sx, py + ph + 40); ctx.stroke();
     }
   }
-  const sg = ctx.createLinearGradient(px, 0, px + pw, 0);
-  sg.addColorStop(0, '#8d97b5'); sg.addColorStop(0.5, '#e8edff'); sg.addColorStop(1, '#8d97b5');
-  ctx.fillStyle = sg; rr(px, py, pw, ph, 4); ctx.fill();
-  ctx.fillStyle = '#11141f'; ctx.fillRect(px + 5, py + 4, pw - 10, 20); // dark mouth
-  ctx.fillStyle = 'rgba(0,0,0,.25)';
-  ctx.fillRect(px + 5, py + 24, pw - 10, 3); ctx.fillRect(px + 5, py + 40, pw - 10, 3);
-  // USB trident logo-ish mark
-  ctx.fillStyle = '#2b3350'; ctx.font = '900 13px "Segoe UI",sans-serif'; ctx.textAlign = 'center';
-  ctx.fillText('⛛', hx, py + 56);
-  // grip
-  ctx.fillStyle = E.sleeve || '#31405f'; rr(hx - pw/2 - 8, py + ph - 6, pw + 16, 26, 6); ctx.fill();
-  ctx.fillStyle = 'rgba(255,255,255,.15)'; ctx.fillRect(hx - pw/2 - 8, py + ph - 6, pw + 16, 4);
+  drawUSBStick(ctx, hx, py, pw, E.sleeve === '#5f313d' ? '#ed9b83' : '#d6fa72');
 
   // angry brows on the fist? no — keep readable. Danger ring instead:
   if (E.state === 'track') {
@@ -743,7 +934,7 @@ function drawTelegraph(E) {
   if (!E || (E.state !== 'lock' && E.state !== 'strike')) return;
   if (E.state === 'lock' && E.blackout) return; // crosshair cut out — read the hand, not the marker
   const tx = E.lockedX;
-  const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 90);
+  const pulse = motionPreference.matches ? 0.5 : 0.5 + 0.5 * Math.sin(performance.now() / 90);
   if (E.state === 'lock') {
     // dotted aim line plug -> target
     ctx.save();
@@ -770,7 +961,8 @@ function drawTelegraph(E) {
 }
 
 // ---------- main loop ----------
-let last = performance.now();
+let hudElapsed = 0;
+let chromeScreen;
 const QS = new URLSearchParams(location.search);
 const BOT = QS.get('bot') === '1';
 // Dev/testing only: ?speed=N fast-forwards the simulation (e.g. bot full-level runs).
@@ -798,12 +990,37 @@ function botDrive() {
   input.state.axis = botAxisFreeMulti(p.x, threats, c.rail, zone);
 }
 
-function frame(now) {
-  requestAnimationFrame(frame);
-  let dt = Math.min(0.033, (now - last) / 1000) * SPEED;
-  last = now;
-  if (S.screen !== 'playing' || S.paused) { draw(); return; }
+const profiler = QS.get("perf") === "1" ? (await import("./perf.js")).createProfiler() : null;
 
+function frame(now, elapsed) {
+  const started = profiler?.begin();
+  try { runFrame(now, elapsed); } finally { profiler?.end(started, canvas, S.screen); }
+  return !document.hidden && (S.screen === 'playing' || S.screen.endsWith('-pending'));
+}
+
+function runFrame(now, elapsed) {
+  const realDt = Math.min(0.033, elapsed);
+  let dt = realDt * SPEED;
+  input.consume(framePressed);
+  if (framePressed.has('m')) syncMute();
+  if (framePressed.has('p') || framePressed.has('escape')) togglePause();
+  if (framePressed.has('r') && ['playing', 'lose', 'win'].includes(S.screen)) doRetry();
+  if ((framePressed.has('space') || framePressed.has('enter')) && overlay.children.length && document.activeElement?.tagName !== 'BUTTON') overlay.querySelector('.cta')?.click();
+  if (chromeScreen !== S.screen) {
+    chromeScreen = S.screen;
+    pauseButton.disabled = !['playing', 'paused'].includes(S.screen);
+    pauseButton.setAttribute('aria-label', S.paused ? 'Resume game (P)' : 'Pause game (P)');
+  }
+  if (document.hidden) { framePressed.clear(); return; }
+  if (S.screen !== 'playing' || S.paused) {
+    // Menus and paused scenes only need a single paint after state changes.
+    if (S.screen.endsWith('-pending')) { fx.update(dt); S.flash = Math.max(0, S.flash - dt * 2.2); draw(); }
+    else if (frame.screen !== S.screen) { draw(); frame.screen = S.screen; }
+    framePressed.clear(); return;
+  }
+  frame.screen = S.screen;
+
+  dt *= nearMissSlowMo.update(realDt);
   dt = fx.update(dt) || 0; // hitstop consumes the frame
   if (dt > 0) {
     S.elapsed += dt;
@@ -816,14 +1033,21 @@ function frame(now) {
     enemyUpdate(dt);
     if (levelWon(S.elapsed, S.misses, cfg()) && S.screen === 'playing') {
       // time-based win (miss-based win handled in impact())
-      sfx.win(); S.screen = 'win-pending';
-      setTimeout(() => { if (S.screen === 'win-pending') showEnd(true); }, 500);
+      if (S.mode === 'endless') {
+        awardRoundClear();
+        sfx.win();
+        S.screen = 'win-pending';
+        transitionTimer = setTimeout(() => { if (S.screen === 'win-pending') startNextRound(); }, 900);
+      } else {
+        awardLevelClear(); sfx.win(); S.screen = 'win-pending';
+        transitionTimer = setTimeout(() => { if (S.screen === 'win-pending') showEnd(true); }, 500);
+      }
     }
     if (S.elapsed >= cfg().time - 3 && !S.warned) { /* last-seconds tension could tick here */ }
-    updateHud();
+    hudElapsed += dt;
+    if (hudElapsed >= 0.1) { updateHud(); hudElapsed = 0; }
     // lose-pending / win-pending: keep rendering, freeze logic transitions only via screen flag
-    if (S.screen === 'playing') draw();
-    else draw();
+    draw();
   } else {
     draw(); // frozen hitstop frame still renders shake
   }
@@ -831,14 +1055,60 @@ function frame(now) {
 }
 
 // ---------- chrome ----------
-document.getElementById('btn-mute').onclick = (e) => {
-  const m = toggleMute(); e.currentTarget.classList.toggle('muted', m); sfx.ui();
+let directionPointer = null;
+for (const button of document.querySelectorAll('[data-direction]')) {
+  button.addEventListener('pointerdown', e => {
+    if (S.screen !== 'playing' || e.isPrimary === false || directionPointer !== null) return;
+    directionPointer = e.pointerId; button.setPointerCapture(e.pointerId);
+    input.holdDirection(Number(button.dataset.direction));
+  });
+  const release = e => {
+    if (directionPointer !== e.pointerId) return;
+    directionPointer = null; input.releaseDirection();
+  };
+  for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) button.addEventListener(event, release);
+}
+window.addEventListener('blur', () => { directionPointer = null; });
+window.addEventListener('resize', () => { directionPointer = null; });
+for (const button of slotButtons) button.onclick = () => {
+  if (S.screen === 'playing' && cfg().movement === 'slots') input.tap(cfg().slots[Number(button.dataset.slot)]);
 };
-document.getElementById('btn-help').onclick = () => showMenu();
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden && S.screen === 'playing' && !S.paused) togglePause();
+
+function syncMute() {
+  const muted = toggleMute();
+  const button = document.getElementById('btn-mute');
+  button.classList.toggle('muted', muted); button.setAttribute('aria-pressed', String(muted));
+  button.setAttribute('aria-label', muted ? 'Unmute (M)' : 'Mute (M)');
+}
+document.getElementById('btn-mute').onclick = () => { syncMute(); sfx.ui(); };
+window.addEventListener('pointerdown', unlockAudio, { passive: true });
+window.addEventListener('pointerup', unlockAudio, { passive: true });
+window.addEventListener('keydown', unlockAudio);
+window.addEventListener('pagehide', () => { input.reset(); suspendAudio(); scheduler.stop(); });
+window.addEventListener('pageshow', () => { frame.screen = null; wake(); });
+motionPreference.addEventListener('change', () => { frame.screen = null; wake(); });
+pauseButton.onclick = () => togglePause();
+document.getElementById('btn-help').onclick = () => {
+  if (S.screen === 'playing') togglePause();
+  else if (S.screen === 'paused') togglePause();
+  else showMenu();
+};
+overlay.addEventListener('keydown', e => {
+  if (e.key !== 'Tab') return;
+  const buttons = [...overlay.querySelectorAll('button')];
+  if (!buttons.length) return;
+  const first = buttons[0], last = buttons.at(-1);
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
 });
-window.addEventListener('pointerdown', () => { if (S.screen === 'playing' && S.paused) togglePause(); }, { once: true });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    input.reset(); suspendAudio();
+    if (S.screen === 'playing' && !S.paused) togglePause();
+    scheduler.stop();
+  } else { frame.screen = null; wake(); }
+});
+
 
 // ---------- boot ----------
 {
@@ -850,9 +1120,21 @@ window.addEventListener('pointerdown', () => { if (S.screen === 'playing' && S.p
   const footOs = document.getElementById('foot-os');
   if (footOs && flavor.foot) footOs.textContent = flavor.foot;
 }
+resizeCanvas();
 resetLevel(0);
 const startLevel = Math.max(1, Math.min(LEVELS.length, parseInt(QS.get('level') || '1', 10))) - 1;
-if (QS.get('play') === '1' || BOT) {
+// Dev/testing: ?endless=1&round=N jumps straight into an endless run.
+if (QS.get('endless') === '1') {
+  hide(); hud.classList.remove('hidden');
+  S.mode = 'endless'; S.score = 0;
+  S.flipLife = QS.get('flip') === '1';
+  S.round = Math.max(1, parseInt(QS.get('round') || '1', 10)) - 1;
+  startNextRound();
+  if (QS.get('end') === 'lose') { // preview the endless game-over card
+    for (const p of S.ports) { p.alive = false; p.stuckX = p.x; }
+    S.elapsed = 12.3; S.score = 1250; S.enemies[0].tipY = contactTipY(); showEnd(false);
+  }
+} else if (QS.get('play') === '1' || BOT) {
   resetLevel(startLevel); hide(); S.screen = 'playing';
   S.banner = { str: 'DODGE!', sub: '', t: 0.9 };
   hud.classList.remove('hidden');
@@ -869,10 +1151,11 @@ if (QS.get('play') === '1' || BOT) {
     for (const p of S.ports) { p.alive = false; p.stuckX = p.x; }
     S.elapsed = 12.3; S.enemies[0].tipY = contactTipY(); showEnd(false);
   } else if (QS.get('end') === 'win') {
-    S.misses = cfg().missesToWin; S.elapsed = 24.5; showEnd(true);
+    S.misses = cfg().missesToWin; S.elapsed = 24.5; S.score = S.misses * SCORE.MISS; awardLevelClear(); showEnd(true);
   }
 } else {
   showMenu();
 }
 updateHud();
-requestAnimationFrame(frame);
+scheduler = createFrameScheduler(frame);
+scheduler.wake();

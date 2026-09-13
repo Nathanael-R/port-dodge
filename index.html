@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#111310">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>USB DODGE — a tiny game about not getting plugged</title>
 <link rel="stylesheet" href="style.css">
 </head>
@@ -26,10 +27,12 @@
         <span id="hud-time">30.0s</span>
       </div>
       <div class="pill"><span class="pill-lbl">MISS</span><span id="hud-miss">○○○○○</span></div>
+      <div class="pill"><span class="pill-lbl">SCORE</span><span id="hud-score">0</span></div>
       <div class="pill ports"><span id="hud-ports">●</span></div>
       <div class="pill" id="hud-flip" style="display:none">⟲ +1 FLIP</div>
     </div>
     <div id="topbtns">
+      <button id="btn-pause" class="iconbtn" title="Pause / resume (P)" aria-label="Pause game (P)" disabled>Ⅱ</button>
       <button id="btn-mute" class="iconbtn" title="Mute (M)" aria-label="Mute (M)">
         <svg class="ic-on" viewBox="0 0 24 24" aria-hidden="true">
           <path d="M4 9.5v5h3.2L12 18.5V5.5l-4.8 4H4z" fill="currentColor"/>
@@ -49,11 +52,18 @@
       </button>
     </div>
   </header>
+  <div class="arcade-label"><span><i></i> THE ANTI-CONNECTION ARCADE</span><span>EST. 2026 · SINGLE PLAYER</span></div>
   <div id="stage">
     <div id="timebar" title="Time remaining"><div id="timefill"></div></div>
-    <canvas id="game" width="960" height="540"></canvas>
+    <canvas id="game" width="960" height="540" tabindex="0" aria-label="USB Dodge game. Move with arrow keys or drag. Pause with P."></canvas>
     <div id="overlay"></div>
   </div>
+  <div id="touch-controls" data-mode="slide" aria-label="Touch controls">
+    <p id="touch-hint">Drag to slide, or hold an arrow.</p>
+    <div class="touch-arrows"><button data-direction="-1" aria-label="Move left">←</button><button data-direction="1" aria-label="Move right">→</button></div>
+    <div class="touch-slots"><button data-slot="0" aria-label="Jump to slot 1">1</button><button data-slot="1" aria-label="Jump to slot 2">2</button><button data-slot="2" aria-label="Jump to slot 3">3</button><button data-slot="3" aria-label="Jump to slot 4">4</button><button data-slot="4" aria-label="Jump to slot 5">5</button></div>
+  </div>
+  <div class="level-track" aria-label="Campaign levels"><span>01 <b>First boot</b></span><span>02 <b>Cornered</b></span><span>03 <b>Double trouble</b></span><span>04 <b>Two hands</b></span><span>05 <b>Blackout</b></span></div>
   <footer id="foot">
     <div id="foot-keys">A/D or ←/→ to move · Space to confirm · P pause · M mute</div>
     <div id="foot-os"></div>

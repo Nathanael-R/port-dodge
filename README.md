@@ -48,6 +48,25 @@ Lose a level when all your ports get plugged.
 | 4 · Two Hands | two ports vs **two humans** (blue sleeve + rust sleeve, staggered) — lose one port and *both* hands hunt the survivor, now cornered by its partner's corpse. Your ports hang **upside-down**: the first plug is absorbed (`FLIP SAVED YOU!`) plus 1s of phase-out. Humans also **barricade 20% of the edge** in striped `NOPE` zones |
 | 5 · Blackout | back to one port in the slots — but the hand's **crosshair cuts out at random** (read the fist's drift, not the marker), and **one slot at a time gets seized** (flashing `!` warning, then red `✕`; campers get `EJECTED!` to the safest free slot) |
 
+## ♾️ Endless mode
+
+Five levels not enough? **ENDLESS** (menu button) cycles all archetypes —
+free → slots → duo → two-hands → blackout — with continuous scaling per round:
+
+- faster hands (capped +60%), shorter telegraphs (floor 0.42s), more
+  double-jabs (cap 0.6) and blackouts (cap 0.5), fatter plugs (cap 70px)
+- extra hands join at higher loops (max 3 free / 2 slots), barricades spread
+  to every archetype from loop 2
+- miss quota grows +1/loop (cap +3)
+
+Scoring (both modes): **+100** per forced miss, **+150** per near-miss,
+floating `+100` text on every dodge, clear bonus **500 + 100 per
+level/round** shown on victory cards. Retrying a level rolls score back to
+where the attempt started (no farming your own corpse). In endless, every 3rd
+round tops up a ⟲ FLIP-FLOP (or +250 if held). Death ends
+the run — best score persists in `localStorage`. No accounts, no backend,
+survives private mode (best just won't stick).
+
 Game feel: anticipation raise before strikes, screen shake, hit-stop,
 sparks, near-miss callouts, squash on the port, procedural WebAudio
 bleeps/clangs (no audio assets). HUD shows a live time bar (pulsing red
@@ -132,7 +151,8 @@ Key decisions:
   jump-straight-in, `?bot=1` autopilot, `?speed=N` fast-forward,
   `?end=lose|win` end-card preview, `?dead=N` pre-killed port (practice the
   walled-survivor endgame), `?flip=1` preview the earned extra life,
-  `?os=mac|windows|linux` preview an OS flavor.
+  `?os=mac|windows|linux` preview an OS flavor,
+  `?endless=1&round=N` jump into an endless run (`&bot=1&speed=M` works too).
 
 ## Deliberately left out
 
@@ -154,3 +174,56 @@ proven and any of those earn their place.
    `levels.js`): `plugW` ramps 48 → 56 → 62 across L3–L5 (hit window
    ~38 → ~41 → ~45px, and the plug visibly fattens), survival time ramps
    40/42/40s from L3 up, `blackout: 0.3`, blocker `dur`/`gap`, L5 `lockTime`.
+
+
+## UI polish and rendering pass
+
+The arcade shell now uses charcoal/lime, compact level progress, distinct score and
+dodge counters, short onboarding, result statistics, and mobile-safe overlays.
+Pause is available on screen and via P/Esc; Help pauses without discarding the run.
+Menus manage keyboard focus; button feedback and short entrances respect reduced
+motion, which also suppresses camera shake and reduces decorative particles.
+
+Rendering caches the static desk/laptop, skips repeated static menu paints, caps
+canvas density at 2x, updates HUD values at 10 Hz, and animates the timer using a
+transform. Particle bursts are capped at 160 and reset with each attempt. Pending
+result timers are cancelled on restart; campaign clears award their advertised bonus.
+`tests/ui.test.mjs` covers effect bounds/reset, reduced motion, and input blur cleanup.
+
+Next design experiments (proposals, not added levels):
+- **Wrong Way Round:** a human flips the USB-A plug, with a visibly different second
+  wind-up. Teach this alone before pairing it with double-jabs.
+- **Dongle Chain:** a heavy adapter swings across the edge on a clearly marked arc;
+  reward moving through the gap after it passes.
+- **Hot Swap:** alternate control between two ports while the other holds position.
+  Start with one slow hand to teach switching before combining threats.
+
+Keep the committed strike rule: once the target locks, it must remain honest.
+Before expanding the campaign, playtest levels 4–5 with humans and tune telegraph
+lengths. The next code cleanup should separate canvas drawing and overlay screens
+from main.js while keeping the pure gameplay logic and headless simulations intact.
+
+
+Near misses can now trigger a 280ms slow-motion beat, starting at 40% speed and
+smoothly recovering. It happens at most once per level/round attempt, with an
+18-second active-play cooldown that survives retries and round transitions.
+The beat replaces the old near-miss hit-stop, skips level-ending dodges, and is
+disabled by reduced-motion preferences. Pausing does not consume the cooldown.
+
+
+## Mobile browsers and performance
+
+Use a current browser on iOS or Android. Drag the playfield or hold the on-screen
+arrows in slide levels; tap the numbered controls in slot levels. Both portrait
+and landscape layouts are supported, with safe-area padding and 44px-or-larger
+primary touch controls. Audio unlocks on a user gesture; leaving the page pauses
+the game and suspends audio.
+
+For testing on a phone, run `npm run serve` on the computer, connect both devices
+to the same network, and open `http://<computer-LAN-IP>:8099` on the phone.
+`localhost` on the phone refers to the phone itself. The server needs to be
+reachable through the computer's firewall; no firewall settings are changed here.
+
+See [the performance audit](PERFORMANCE.md) for measurements, implemented fixes,
+and physical-device verification still needed. Add `?perf=1` for optional frame
+CPU diagnostics; normal play does not download the diagnostic module.
