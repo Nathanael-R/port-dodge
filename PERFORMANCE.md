@@ -67,7 +67,8 @@ within a 16.7ms frame budget. These numbers do not establish physical-phone FPS.
 
 ## Verification and remaining checks
 
-- 52 tests pass: gameplay/endless simulations plus scheduler, canvas sizing, fast
+- 70 tests pass: gameplay/endless simulations (all 8 levels, three endless cycles,
+  seals, pop quiz, accelerating hunter) plus scheduler, canvas sizing, fast
   taps, secondary fingers, cancellation, audio reuse, cleanup and suspend/resume.
 - Browser checks cover start, pause/resume, idle wakeup, a numbered slot jump,
   portrait play/result screens, 320px width and 844×390 landscape controls.

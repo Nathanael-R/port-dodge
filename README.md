@@ -37,27 +37,37 @@ with a readable cycle: **track → lock (red telegraph) → strike → recover**
 The strike always lands exactly where it was telegraphed — so every hit is
 your fault and every dodge feels like you tricked the human.
 
-Win a level by surviving the timer **or** forcing enough misses.
-Lose a level when all your ports get plugged.
+Levels 1–3 can also be won early by forcing enough misses; **from level 4 on
+the timer is the only exit**, so dodges score points but survival is what
+advances you. Lose a level when all your ports get plugged.
 
 | Level | Twist |
 |---|---|
 | 1 · First Boot | free sliding, one slow human, long telegraphs |
 | 2 · Cornered | no more sliding — teleport between 5 slots; faster hand, occasional double-jabs, and **no panic-hops**: teleports fizzle while a strike is in flight (`TOO LATE!`), so dodges must be committed during the telegraph |
 | 3 · Double Trouble | two ports, one shared command — a dead port's cable becomes a **wall** the survivor can't cross. **Clearing it earns the FLIP-FLOP extra life.** |
-| 4 · Two Hands | two ports vs **two humans** (blue sleeve + rust sleeve, staggered) — lose one port and *both* hands hunt the survivor, now cornered by its partner's corpse. Your ports hang **upside-down**: the first plug is absorbed (`FLIP SAVED YOU!`) plus 1s of phase-out. Humans also **barricade 20% of the edge** in striped `NOPE` zones |
-| 5 · Blackout | back to one port in the slots — but the hand's **crosshair cuts out at random** (read the fist's drift, not the marker), and **one slot at a time gets seized** (flashing `!` warning, then red `✕`; campers get `EJECTED!` to the safest free slot) |
+| 4 · Two Hands | two ports vs **two humans** — survive **25s**. Lose one port and *both* hands hunt the survivor, now cornered by its partner's corpse. Your ports hang **upside-down**: the first plug is absorbed (`FLIP SAVED YOU!`) plus 1s of phase-out. Humans also **barricade 20% of the edge** in striped `NOPE` zones |
+| 5 · Blackout | back to one port in the slots — survive **40s**, but the hand's **crosshair cuts out at random** (read the fist's drift, not the marker), and **one slot at a time gets seized** (flashing `!` warning, then red `✕`; campers get `EJECTED!` to the safest free slot) |
+| 6 · Crowded Edge | two slots come **pre-sealed** by stuck plugs (always leaving a connected triple), and the lone hunter **accelerates every strike** (track ×1.05, lock ×0.96, capped) — end it quickly |
+| 7 · Pop Quiz | time **freezes** and every plug creeps toward the port you're on — answer the procedurally generated math (**+−×**, infinite variety) to unfreeze for **+50**. Wrong or timeout earns every hand a point-blank 0.35s lock |
+| 8 · Seal Team | **free slide** — the edge gets sealed in chunks over time, so your lane **shrinks**. Every 3rd **CLOSE!!** dodge reclaims the newest chunk. Tight dodges are the economy |
 
 ## ♾️ Endless mode
 
-Five levels not enough? **ENDLESS** (menu button) cycles all archetypes —
-free → slots → duo → two-hands → blackout — with continuous scaling per round:
+Eight levels not enough? **ENDLESS** (menu button) cycles all eight archetypes
+on repeat, interleaved so the movement modes stay balanced (free → cornered
+→ crowded edge → double trouble → pop quiz → two hands → blackout → seal team),
+with continuous scaling every round. Every round is a flat **25s survival
+sprint: only the timer moves you on**, dodges just score. The headless sims
+clear three full cycles (rounds 1–24); note they hold double-jabs off for the
+balance pass, so with the random double-jabs live the late rounds get genuinely
+dicey — endless is meant to end your run eventually.
 
-- faster hands (capped +60%), shorter telegraphs (floor 0.42s), more
-  double-jabs (cap 0.6) and blackouts (cap 0.5), fatter plugs (cap 70px)
-- extra hands join at higher loops (max 3 free / 2 slots), barricades spread
-  to every archetype from loop 2
-- miss quota grows +1/loop (cap +3)
+- faster hands (capped +60%, and never faster than the port), shorter
+  telegraphs (floor 0.42s), more double-jabs (cap 0.45) and blackouts (cap 0.5),
+  fatter plugs (cap 70px)
+- extra hands join later in a run (a second at round 17, a third at round 33;
+  max 3 free / 2 slots), barricades spread to every archetype from round 17
 
 Scoring (both modes): **+100** per forced miss, **+150** per near-miss,
 floating `+100` text on every dodge, clear bonus **500 + 100 per
@@ -101,11 +111,12 @@ src/
   fx.js      particles, floating text, shake, hit-stop
 tests/
   logic.test.mjs   collisions, slots, win/lose, physics, FSM order
-  sim.test.mjs     headless full-level playthroughs: bot wins all 5 levels,
-                   standing still loses, strikes can't re-steer, corpse-walls
-                   hold for entire levels, hands keep lanes without breaking locks,
-                   blackouts are beatable on body language alone, blockers cycle
-                   warn -> solid -> release with ejection
+  sim.test.mjs     headless full-level playthroughs: bot wins all 8 levels and
+                   three full endless cycles, standing still loses, strikes
+                   can't re-steer, corpse-walls hold for entire levels, hands
+                   keep lanes without breaking locks, blackouts are beatable on
+                   body language alone, blockers cycle warn -> solid -> release
+                   with ejection, seals/quiz/ramp resolve cleanly
 ```
 
 Key decisions:
@@ -169,11 +180,12 @@ proven and any of those earn their place.
    jabber vs. a slow USB-A bruiser — `hands[]` overrides already support this;
    blackout would suit the jabber).
 3. Narrow-escape slow-mo (near-miss already detected — `resolveStrike` returns `'near'`).
-4. Real player tuning pass: L4's barricades and L5's blackout rate are sim-fair
-   for perfect play; humans need playtesting. Current escalation knobs (all in
-   `levels.js`): `plugW` ramps 48 → 56 → 62 across L3–L5 (hit window
-   ~38 → ~41 → ~45px, and the plug visibly fattens), survival time ramps
-   40/42/40s from L3 up, `blackout: 0.3`, blocker `dur`/`gap`, L5 `lockTime`.
+4. Real player tuning pass: L4's barricades, L5's blackout rate and L8's trim
+   pace are sim-fair for perfect play; humans need playtesting. Current
+   escalation knobs (all in `levels.js`): `plugW` ramps 48 → 56 → 62 across
+   L3–L5 (hit window ~38 → ~41 → ~45px, and the plug visibly fattens), the
+   timer-only levels run 25/40/35/35/38s for L4–L8, `blackout: 0.3`, blocker
+   `dur`/`gap`, L5 `lockTime`, L8 `sealTide` chunk/minWidth.
 
 
 ## UI polish and rendering pass
