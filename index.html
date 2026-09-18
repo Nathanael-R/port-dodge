@@ -30,6 +30,7 @@
       <div class="pill"><span class="pill-lbl">SCORE</span><span id="hud-score">0</span></div>
       <div class="pill ports"><span id="hud-ports">●</span></div>
       <div class="pill" id="hud-flip" style="display:none">⟲ +1 FLIP</div>
+      <div class="pill" id="hud-seal" style="display:none">🔓 0/3</div>
     </div>
     <div id="topbtns">
       <button id="btn-pause" class="iconbtn" title="Pause / resume (P)" aria-label="Pause game (P)" disabled>Ⅱ</button>
@@ -63,7 +64,7 @@
     <div class="touch-arrows"><button data-direction="-1" aria-label="Move left">←</button><button data-direction="1" aria-label="Move right">→</button></div>
     <div class="touch-slots"><button data-slot="0" aria-label="Jump to slot 1">1</button><button data-slot="1" aria-label="Jump to slot 2">2</button><button data-slot="2" aria-label="Jump to slot 3">3</button><button data-slot="3" aria-label="Jump to slot 4">4</button><button data-slot="4" aria-label="Jump to slot 5">5</button></div>
   </div>
-  <div class="level-track" aria-label="Campaign levels"><span>01 <b>First boot</b></span><span>02 <b>Cornered</b></span><span>03 <b>Double trouble</b></span><span>04 <b>Two hands</b></span><span>05 <b>Blackout</b></span></div>
+  <div class="level-track" aria-label="Campaign levels"><!-- spans rendered from LEVELS in main.js --></div>
   <footer id="foot">
     <div id="foot-keys">A/D or ←/→ to move · Space to confirm · P pause · M mute</div>
     <div id="foot-os"></div>

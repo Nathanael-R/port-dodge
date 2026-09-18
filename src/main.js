@@ -4,7 +4,7 @@ import { createInput } from './input.js';
 import { sfx, toggleMute, unlockAudio, suspendAudio } from './audio.js';
 import { detectOS, osCopy } from './os.js';
 import { LEVELS, buildEndlessRound, endlessClearBonus, SCORE } from './levels.js';
-import { W, H, EDGE_Y, resolveStrike, hopSlot, levelWon, stepFree, createEnemy, stepEnemy, separateEnemies, botAxisFreeMulti, botSlotDirMulti, strikeLockout, absorbHit, applyDeadWalls, createBlocker, stepBlocker, pushOutOfZone, safestSlot } from './logic.js';
+import { W, H, EDGE_Y, resolveStrike, hopSlot, levelWon, stepFree, createEnemy, stepEnemy, separateEnemies, botAxisFreeMulti, botSlotDirMulti, strikeLockout, absorbHit, applyDeadWalls, createBlocker, stepBlocker, pushOutOfZone, safestSlot, pickStartSeals, applyRamp, genQuiz, pickTideTrim, sealRail, unsealTick } from './logic.js';
 import { createFX, createNearMissSlowMo } from './fx.js';
 
 const canvas = document.getElementById('game');
@@ -70,6 +70,11 @@ const S = {
   flipEarned: false, // set when endless awards a flip; announced on the next round banner
   invuln: 0,       // phase-out timer granted when the flip-life is consumed
   blocker: null,   // territory denial: {phase, t, x, w, slot} or null when level has none
+  sealed: [],      // permanently stuck plugs claiming slots (Crowded Edge)
+  quiz: null,      // active pop quiz {a,op,b,options,correct,t,timeout,start[]} or null
+  quizT: Infinity, // countdown to the next freeze (Pop Quiz levels only)
+  unsealPips: 0,   // CLOSE!! progress toward unsealing (Seal Team: every 3rd releases one)
+  sealT: Infinity, // countdown to the next auto-seal (Seal Team only)
   result: null,
 };
 let transitionTimer;
@@ -79,9 +84,29 @@ const slotButtons = [...document.querySelectorAll("[data-slot]")];
 const touchHint = document.getElementById("touch-hint");
 let controlMode;
 let controlSlot = -1;
+// Level progress markers render from LEVELS so new levels show up for free.
+const levelTrack = document.querySelector('.level-track');
+if (levelTrack) {
+  levelTrack.textContent = '';
+  LEVELS.forEach((l, i) => {
+    const s = document.createElement('span');
+    s.append(`${String(i + 1).padStart(2, '0')} `);
+    const b = document.createElement('b');
+    b.textContent = l.name.toLowerCase();
+    s.append(b);
+    levelTrack.append(s);
+  });
+}
 const levelMarkers = [...document.querySelectorAll(".level-track > span")];
 
 function cfg() { return S.customCfg || LEVELS[S.levelIdx]; }
+
+// Win rule: early levels can be cleared by surviving OR forcing enough misses;
+// from level 4 on (and every endless round) the timer is the only exit, so
+// dodges score but only survival moves you on.
+function roundWon() {
+  return levelWon(S.elapsed, S.misses, cfg());
+}
 
 // ---------- setup ----------
 function resetLevel(idx) {
@@ -112,6 +137,16 @@ function setupRound(c) {
   const e = c.enemy;
   S.bumpCd = 0; S.denyCd = 0; S.invuln = 0; // fresh-level timers (flipLife persists: it's earned, not given)
   S.blocker = createBlocker(c.blocker);
+  S.quiz = null; // any half-answered question dies with the attempt
+  S.quizT = c.quiz ? c.quiz.first : Infinity;
+  S.unsealPips = 0;
+  S.sealT = c.sealTide ? c.sealTide.first : Infinity;
+  // pre-sealed slots (Crowded Edge): stuck plugs claim ground before the first attack
+  S.sealed = [];
+  if (c.movement === 'slots' && c.startSeals) {
+    const occ = S.ports[0]?.slot ?? -1;
+    S.sealed = pickStartSeals(c.slots, occ, c.startSeals, Math.random);
+  }
   // one FSM per hand; extra hands stagger in and may tune the base params
   S.enemies = (c.hands || [{}]).map((h, i) => {
     const E = createEnemy(480 + (i === 0 ? 0 : (i % 2 ? 150 : -150)), h.startDelay ?? e.startDelay);
@@ -155,7 +190,7 @@ function showMenu() {
     <h1>Stay<br><em>unplugged.</em></h1>
     <p class="big">You're the USB port.<br>The human needs a connection. You need space.</p>
     <div class="btnrow"><button class="cta" data-act="start">Let's dodge <span>→</span></button><button class="ghost" data-act="endless">∞ Endless</button></div>
-    <div class="menu-meta">5 levels of connection issues <span>•</span> ${best ? `Best endless: ${best.toLocaleString()}` : 'Zero cables attached'}</div>
+    <div class="menu-meta">${LEVELS.length} levels of connection issues <span>•</span> ${best ? `Best endless: ${best.toLocaleString()}` : 'Zero cables attached'}</div>
     <div class="quick-guide"><span><b>01</b> Bait the hand</span><span><b>02</b> Wait for red</span><span><b>03</b> Get out of there</span></div>
   </div>`);
 }
@@ -166,9 +201,13 @@ function showIntro() {
     <div class="tag">LEVEL ${c.id} OF ${LEVELS.length}</div>
     <h2>${c.name}</h2><p class="big">${c.sub}</p>
     <p>${c.movement === 'free' ? 'Free slide. Long telegraphs. One slow human.' : c.movement === 'slots' ? 'No more free sliding — you live in the glowing slots now. The hand is faster and sometimes double-jabs. Hop <b>before</b> the strike: mid-strike hops fizzle with a <b>TOO LATE!</b>' : c.id === 4 ? 'Two ports, one command — against TWO humans. A dead port becomes a wall, and both hands will hunt whoever is left.' : 'Two ports, one command. Lose one and its corpse blocks the survivor — keep dodging with the other.'}
-    Survive <b>${c.time}s</b> or force <b>${c.missesToWin} misses</b>.</p>
+    Survive <b>${c.time}s</b>${c.timeOnly ? '.' : ` or force <b>${c.missesToWin} misses</b>.`}</p>
     ${((c.hands || []).some(h => ((h.blackout ?? c.enemy.blackout) || 0) > 0)) ? `<p>⚡ Their crosshairs <b>cut out at random</b> — read the hand's drift, not the marker.</p>` : ''}
     ${c.blocker ? `<p>🚧 The humans barricade the edge${c.blocker.kind === 'slot' ? ' — one slot gets seized at a time' : ` in ${Math.round(c.blocker.frac * 100)}% chunks`} — clear the flashing outline before it goes solid.</p>` : ''}
+    ${c.startSeals ? `<p>🔌 ${c.startSeals} slots come pre-sealed by stuck plugs — ${c.slots.length - c.startSeals} left to dodge between. No take-backs.</p>` : ''}
+    ${c.enemy.ramp ? `<p>⚡ The hunter gets <b>faster every strike</b> — end this quickly.</p>` : ''}
+    ${c.quiz ? `<p>📐 Time <b>freezes</b> and the plug creeps — answer the math to unfreeze it. Wrong answers earn a point-blank lock.</p>` : ''}
+    ${c.sealTide ? `<p>🦭 The edge gets <b>sealed off</b> over time — your lane shrinks. Every <b>3rd CLOSE!!</b> dodge reclaims a chunk. Narrow escapes are the currency.</p>` : ''}
     ${S.flipLife ? `<p>🎁 <b>FLIP-FLOP ACTIVE:</b> your ports hang upside-down — the first plug is on the house.</p>` : ''}
     <div class="btnrow"><button class="cta" data-act="play">DODGE!</button></div>
   </div>`);
@@ -181,7 +220,7 @@ function showEnd(win) {
   const last = S.levelIdx === LEVELS.length - 1;
   const title = win ? (last ? 'YOU REMAIN UNPLUGGED' : 'DODGED!') : 'PLUGGED IN';
   const sub = win
-    ? (last ? 'Five levels. Zero commitment. The humans are filing a bug report.' : `Connection avoided. Ready for the next human?${c.id === 3 ? ' FLIP-FLOP earned: your next plug is on the house.' : ''}`)
+    ? (last ? `${LEVELS.length} levels. Zero commitment. The humans are filing a bug report.` : `Connection avoided. Ready for the next human?${c.id === 3 ? ' FLIP-FLOP earned: your next plug is on the house.' : ''}`)
     : 'The human finally made a connection. Make it work harder next time.';
   show(`<div class="card result-card flash">
     <div class="result-icon ${win ? 'won' : 'lost'}" aria-hidden="true">${win ? '✓' : '×'}</div>
@@ -231,9 +270,10 @@ function showEndlessIntro() {
   show(`<div class="card flash">
     <div class="tag">♾️ ENDLESS MODE</div>
     <h2>HOW LONG CAN YOU STAY UNPLUGGED?</h2>
-    <p class="big">All five challenges on repeat — free slide, slots, duo, two hands, blackout — meaner every round: faster hands, shorter telegraphs, extra hands, spreading barricades.</p>
+    <p class="big">All eight challenges on repeat — free slide, slots, duo, two hands, blackout, crowded edge, pop quiz, seal team — meaner every round: faster hands, shorter telegraphs, extra hands, spreading barricades.</p>
     <ul class="howto">
       <li>Miss forced: <b>+${SCORE.MISS}</b> · near-miss: <b>+${SCORE.NEAR}</b> · round clear: <b>500+</b></li>
+      <li>Only the <b>timer</b> moves you on — dodges score, survival advances</li>
       <li>Every 3rd round clears a <b>⟲ FLIP-FLOP</b> extra life (if you don't hold one)</li>
       <li>Run ends when every port is plugged. Best score lives on this machine.</li>
     </ul>
@@ -258,6 +298,10 @@ function roundTags(c) {
   if (bo > 0) tags.push(`blackout ${Math.round(bo * 100)}%`);
   if (c.blocker) tags.push(c.blocker.kind === 'slot' ? 'seized slots' : 'barricades');
   if (c.enemy.doubles >= 0.4) tags.push('double-jabs');
+  if (c.startSeals) tags.push(`${c.startSeals} sealed`);
+  if (c.sealTide) tags.push('seal tide');
+  if (c.quiz) tags.push('pop quiz');
+  if (c.enemy.ramp) tags.push('accelerating');
   return tags.join(' · ');
 }
 
@@ -341,13 +385,27 @@ function updateHud() {
   setText(elScore, S.score.toLocaleString());
   const remain = Math.max(0, c.time - S.elapsed);
   setText(elTime, `${remain.toFixed(1)}s`);
-  setText(elMiss, `${S.misses} / ${c.missesToWin}`);
-  elMiss.title = `${S.misses}/${c.missesToWin} forced misses`;
+  const timeOnly = !!c.timeOnly || S.mode === 'endless';
+  setText(elMiss, timeOnly ? `${S.misses}` : `${S.misses} / ${c.missesToWin}`);
+  elMiss.title = timeOnly
+    ? 'forced misses — survive the timer to advance'
+    : `${S.misses}/${c.missesToWin} forced misses`;
   setText(elPorts, S.ports.map(p => p.alive ? '●' : '✕').join(' '));
   elPorts.style.color = S.ports.some(p => p.alive) ? '' : 'var(--warn)';
   if (elFlip) {
     elFlip.style.display = S.flipLife ? '' : 'none';
     elFlip.textContent = S.invuln > 0 ? '⟲ phased…' : '⟲ +1 FLIP';
+  }
+  const elSeal = document.getElementById('hud-seal');
+  if (elSeal) {
+    const on = !!c.sealTide;
+    elSeal.style.display = on ? '' : 'none';
+    if (on) {
+      const usable = S.sealed.length ? sealRail(c.rail, S.sealed) : c.rail;
+      const lost = Math.round((1 - (usable.max - usable.min) / (c.rail.max - c.rail.min)) * 100);
+      elSeal.textContent = `🔓 ${S.unsealPips}/3 CLOSE!!${lost > 0 ? ` · edge −${lost}%` : ''}`;
+      elSeal.title = 'The edge gets sealed over time — every 3rd CLOSE!! dodge reclaims a chunk';
+    }
   }
   if (fill) {
     const frac = Math.max(0, Math.min(1, remain / c.time));
@@ -398,6 +456,8 @@ function impact(E) {
   const outcome = resolveStrike(E.lockedX, e.plugW, S.ports);
   E.tipY = contactTipY();
   if (S.screen !== 'playing') return; // end-of-level races between two hands: first one counts
+  // accelerating hunter: every strike sharpens the next (per-hand copy only — never the level config)
+  E.ep = applyRamp(E.ep ? { ...E.ep } : { ...c.enemy }, (E.ep || c.enemy).ramp);
   if (outcome === 'hit') {
     // kill whichever port got caught — unless flip-life / phase-out says otherwise
     let victim = null, bd = Infinity;
@@ -445,8 +505,23 @@ function impact(E) {
     if (outcome === 'near') {
       fx.text(E.lockedX, 300, `CLOSE!! +${SCORE.NEAR}`, '#7bff9e', 26, 1.0);
       sfx.nearMiss();
-      if (!levelWon(S.elapsed, S.misses, c)) nearMissSlowMo.trigger();
+      if (!roundWon()) nearMissSlowMo.trigger();
       fx.addShake(7);
+      // Seal Team earn-back: every 3rd CLOSE!! reclaims the newest sealed chunk
+      if (cfg().sealTide) {
+        const c = cfg();
+        const u = unsealTick(S.unsealPips, S.sealed.length);
+        S.unsealPips = u.pips;
+        if (u.release) {
+          const before = sealRail(c.rail, S.sealed);
+          const popped = S.sealed.shift();
+          const edgeX = popped.side < 0 ? before.min : before.max;
+          fx.poof(edgeX, EDGE_Y);
+          fx.text(edgeX, EDGE_Y - 64, 'EDGE RECLAIMED!', '#7bff9e', 20, 1.0);
+          sfx.saved();
+        }
+        updateHud();
+      }
     } else {
       fx.text(E.lockedX, 310, `MISS! +${SCORE.MISS}`, '#4dd8ff', 22, 0.8);
       fx.addShake(6);
@@ -455,7 +530,7 @@ function impact(E) {
     S.flash = 0.18;
     sfx.clang();
     E.doubleQueued = Math.random() < e.doubles;
-    if (levelWon(S.elapsed, S.misses, c)) {
+    if (roundWon()) {
       if (S.mode === 'endless') {
         awardRoundClear();
         sfx.win();
@@ -476,7 +551,8 @@ function blockerUpdate(dt) {
   const c = cfg(), B = S.blocker;
   if (!B) return;
   const ev = stepBlocker(B, dt, c.blocker, c.rail, c.slots || [],
-    (i) => S.ports.some(p => p.alive && p.slot === i));
+    // sealed slots are already claimed — seizures pick from genuinely free ones
+    (i) => S.sealed.includes(i) || S.ports.some(p => p.alive && p.slot === i));
   for (const e of ev) {
     if (e === 'warn') sfx.tick(0);
     if (e === 'solid') sfx.bump();
@@ -492,6 +568,85 @@ function blockerUpdate(dt) {
       sfx.deny();
     }
   }
+}
+
+// ---------- pop quiz ----------
+// Time freezes, every plug creeps toward the edge, and only mental math
+// unfreezes it. Correct: clean reset to track + a small reward. Wrong or
+// timeout: every hand snaps into a fast point-blank lock. Readable either way.
+function freezeQuiz() {
+  const q = genQuiz(Math.random);
+  const timeout = cfg().quiz.timeout;
+  const rail = cfg().rail;
+  S.quiz = { ...q, t: timeout, timeout, start: S.enemies.map(E => ({ x: E.x, y: E.tipY })) };
+  // Freeze each hand mid-lunge pointed at YOU (its nearest living port). The
+  // reticle must read as "it has me", never as a stale slot you've already left.
+  for (const E of S.enemies) {
+    let f = null;
+    for (const p of S.ports) if (p.alive && (!f || Math.abs(p.x - E.x) < Math.abs(f.x - E.x))) f = p;
+    E.state = 'lock'; E.blackout = false;
+    E.lockedX = Math.max(rail.min, Math.min(rail.max, f ? f.x : E.x));
+  }
+  show(`<div class="card flash">
+    <div class="tag">⏸ TIME FROZEN</div>
+    <h2>${q.a} ${q.op} ${q.b} = ?</h2>
+    <p class="big">The plug is creeping toward you. Answer to unfreeze time.</p>
+    <div class="btnrow">${q.options.map((o, i) => `<button class="cta" data-ans="${i}">${o}</button>`).join('')}</div>
+    <p><span class="kbd">1</span><span class="kbd">2</span><span class="kbd">3</span> or tap · <span id="quiz-t">${Math.ceil(timeout)}</span>s left</p>
+  </div>`);
+  overlay.querySelectorAll('[data-ans]').forEach(btn => {
+    btn.onclick = () => {
+      if (!S.quiz) return;
+      sfx.ui();
+      const q = S.quiz;
+      resolveQuiz(parseInt(btn.dataset.ans, 10) === q.correct);
+    };
+  });
+  sfx.lock();
+}
+
+function quizUpdate(dt) {
+  const q = S.quiz;
+  if (!q) return;
+  q.t -= dt;
+  // every frozen plug inches toward both its target port and the edge (creep
+  // capped at 70% — the strike still has to travel the last stretch)
+  const k = Math.min(0.7, 1 - Math.max(0, q.t) / q.timeout);
+  S.enemies.forEach((E, i) => {
+    E.x += (E.lockedX - E.x) * Math.min(1, 1.8 * dt);
+    E.tipY = q.start[i].y + (contactTipY() - q.start[i].y) * k;
+  });
+  const tEl = document.getElementById('quiz-t');
+  if (tEl) tEl.textContent = String(Math.max(0, Math.ceil(q.t)));
+  if (q.t <= 0) resolveQuiz(false);
+}
+
+function resolveQuiz(correct) {
+  const wasQuiz = S.quiz;
+  S.quiz = null;
+  hide();
+  if (!wasQuiz) return;
+  if (correct) {
+    S.score += SCORE.QUIZ;
+    fx.text(480, 300, `SMART! +${SCORE.QUIZ}`, '#7bff9e', 30, 1.0);
+    sfx.saved();
+    for (const E of S.enemies) {
+      E.state = 'track'; E.t = (E.ep || cfg().enemy).trackTime; E.doubleQueued = false;
+    }
+  } else {
+    fx.text(480, 300, 'WRONG!', '#ff5470', 30, 1.0);
+    sfx.deny();
+    const alive = S.ports.filter(p => p.alive);
+    for (const E of S.enemies) {
+      const f = alive.length
+        ? alive.reduce((a, b) => Math.abs(a.x - E.x) < Math.abs(b.x - E.x) ? a : b)
+        : { x: E.x };
+      E.lockedX = Math.max(cfg().rail.min, Math.min(cfg().rail.max, f.x));
+      E.state = 'lock'; E.t = 0.35; E.blackout = false;
+    }
+  }
+  S.quizT = cfg().quiz.every;
+  updateHud();
 }
 
 // ---------- player update ----------
@@ -511,6 +666,8 @@ function playerUpdate(dt) {
     const locked = strikeLockout(S.enemies.map(E => ({ state: E.state })));
     // Seized slots are denied landing while the barricade is solid.
     const seized = (S.blocker && S.blocker.phase === 'active' && c.blocker.kind === 'slot') ? S.blocker.slot : -1;
+    // Permanent seals deny landing for the whole run (Crowded Edge).
+    const sealedHere = (i) => S.sealed.includes(i);
     const denyHop = (reason) => {
       if (S.denyCd > 0) return;
       S.denyCd = 0.5;
@@ -526,6 +683,7 @@ function playerUpdate(dt) {
       if (!framePressed.has(String(i + 1))) continue;
       if (locked) { denyHop('TOO LATE!'); continue; }
       if (i === seized) { denyHop('BLOCKED!'); continue; }
+      if (sealedHere(i)) { denyHop('SEALED!'); continue; }
       if (i === p.slot) continue;
       p.slot = i; p.x = c.slots[i]; p.hopCd = c.player.hopCooldown;
       p.squash = 1; fx.poof(p.x, EDGE_Y); sfx.hop();
@@ -536,6 +694,7 @@ function playerUpdate(dt) {
         const r = hopSlot(p.slot, dir, c.slots.length);
         if (r.moved) {
           if (r.index === seized) denyHop('BLOCKED!');
+          else if (sealedHere(r.index)) denyHop('SEALED!');
           else {
             p.slot = r.index; p.x = c.slots[p.slot]; p.hopCd = c.player.hopCooldown;
             p.squash = 1; fx.poof(p.x, EDGE_Y); sfx.hop();
@@ -550,6 +709,7 @@ function playerUpdate(dt) {
       if (best >= 0) {
         if (locked) denyHop('TOO LATE!');
         else if (best === seized) denyHop('BLOCKED!');
+        else if (sealedHere(best)) denyHop('SEALED!');
         else if (best !== p.slot) { p.slot = best; p.x = c.slots[best]; p.hopCd = c.player.hopCooldown; p.squash = 1; fx.poof(p.x, EDGE_Y); sfx.hop(); }
       }
     }
@@ -566,7 +726,9 @@ function playerUpdate(dt) {
       else axis = 0;
     }
     S.center.vx = S.center.vx || 0;
-    stepFree(S.center, axis, dt, c);
+    // sealed ends of the edge shave the usable rail (Seal Team)
+    const rail = (c.movement === 'free' && c.sealTide && S.sealed.length) ? sealRail(c.rail, S.sealed) : c.rail;
+    stepFree(S.center, axis, dt, { player: c.player, rail });
     if (c.movement === 'duo') {
       for (const p of S.ports) {
         if (!p.alive) continue;
@@ -613,6 +775,7 @@ function playerUpdate(dt) {
 // ---------- pause ----------
 function togglePause() {
   if (S.screen !== 'playing' && !S.paused) return;
+  if (S.quiz) return; // pop quiz is its own 6-second pause — don't stack cards on it
   S.paused = !S.paused;
   if (S.paused) { S.screen = 'paused';
     show(`<div class="card"><div class="tag">PAUSED</div><h2>Take a breath.</h2><p>The human can wait.</p><p>Move with A / D or ← / →, or drag the port.<br>In slot levels, tap a slot or press 1–5.<br>Wait for the red lock, then dodge before the strike.</p><div class="btnrow"><button class="cta" data-act="resume">RESUME</button></div></div>`);
@@ -749,12 +912,13 @@ function drawDents() {
 }
 
 // Territory denial visuals: flashing warning outline, then a solid barricade.
+// Also draws permanent Crowded-Edge seals (which exist without any blocker).
 function drawBlocker() {
   const B = S.blocker, c = cfg();
-  if (!B || B.phase === 'idle') return;
-  const blink = B.phase === 'warn' ? (Math.floor(performance.now() / 150) % 2 === 0) : false;
+  if ((!B || B.phase === 'idle') && !S.sealed.length) return;
+  const blink = B && B.phase === 'warn' ? (Math.floor(performance.now() / 150) % 2 === 0) : false;
   ctx.save();
-  if (c.blocker.kind === 'rail') {
+  if (B && B.phase !== 'idle' && c.blocker.kind === 'rail') {
     const l = B.x - B.w / 2;
     if (B.phase === 'warn') {
       if (blink) {
@@ -779,7 +943,7 @@ function drawBlocker() {
       ctx.fillStyle = '#fff'; ctx.font = '900 13px "Segoe UI",sans-serif'; ctx.textAlign = 'center';
       ctx.fillText('NOPE', B.x, EDGE_Y - 32);
     }
-  } else {
+  } else if (B && B.phase !== 'idle') {
     // seized slot: warn flashes, solid paints a red X over the outline
     const sx = c.slots[B.slot];
     if (sx == null) { ctx.restore(); return; }
@@ -796,6 +960,37 @@ function drawBlocker() {
       ctx.beginPath(); ctx.moveTo(sx - 22, EDGE_Y - 14); ctx.lineTo(sx + 22, EDGE_Y + 4);
       ctx.moveTo(sx + 22, EDGE_Y - 14); ctx.lineTo(sx - 22, EDGE_Y + 4); ctx.stroke();
     }
+  }
+  // permanent seals: stuck plugs squatting on slots for the whole run
+  if (c.movement === 'slots') {
+    ctx.fillStyle = 'rgba(90,22,38,.85)';
+    ctx.strokeStyle = '#ff9f1c'; ctx.lineWidth = 5;
+    for (const i of S.sealed) {
+      const sx = c.slots[i];
+      if (sx == null) continue;
+      rr(sx - 38, EDGE_Y - 22, 76, 34, 6); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(sx - 22, EDGE_Y - 14); ctx.lineTo(sx + 22, EDGE_Y + 4);
+      ctx.moveTo(sx + 22, EDGE_Y - 14); ctx.lineTo(sx - 22, EDGE_Y + 4); ctx.stroke();
+      // stub of the plug that claimed it
+      ctx.fillStyle = '#c7cede'; ctx.fillRect(sx - 14, EDGE_Y - 30, 28, 8);
+      ctx.fillStyle = 'rgba(90,22,38,.85)';
+    }
+  }
+  // Seal Team (free slide): sealed stretches claim each end of the edge, so the
+  // shrinking lane is unmistakable — teeth of the plug run along the whole chunk
+  if (c.movement === 'free' && c.sealTide && S.sealed.length) {
+    ctx.strokeStyle = '#ff9f1c'; ctx.lineWidth = 4;
+    for (const s of S.sealed) {
+      const x = s.side < 0 ? c.rail.min : c.rail.max - s.w;
+      ctx.fillStyle = 'rgba(90,22,38,.92)';
+      rr(x, EDGE_Y - 22, s.w, 34, 6); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#c7cede';
+      for (let px = x + 5; px + 12 <= x + s.w; px += 22) ctx.fillRect(px, EDGE_Y - 30, 12, 8);
+    }
+    ctx.fillStyle = '#ff9f1c'; ctx.font = '900 12px "Segoe UI",sans-serif'; ctx.textAlign = 'center';
+    const r = sealRail(c.rail, S.sealed);
+    ctx.fillText('SEALED', c.rail.min + (r.min - c.rail.min) / 2, EDGE_Y - 40);
+    if (r.max < c.rail.max) ctx.fillText('SEALED', r.max + (c.rail.max - r.max) / 2, EDGE_Y - 40);
   }
   ctx.restore();
 }
@@ -978,16 +1173,21 @@ function botDrive() {
   const threats = S.enemies.map(E => ({ x: E.lockedX, hx: E.x, state: E.state, blackout: !!E.blackout }));
   if (c.movement === 'slots') {
     if (p.hopCd <= 0) {
-      const seized = (S.blocker && S.blocker.phase !== 'idle' && c.blocker.kind === 'slot') ? S.blocker.slot : -1;
-      const dir = botSlotDirMulti(p.slot, c.slots, threats, seized);
-      if (dir < 0) framePressed.add('arrowleft');
-      else if (dir > 0) framePressed.add('arrowright');
+      // permanent seals plus any warned/seized slot are off the bot's map
+      const banned = [...S.sealed];
+      if (S.blocker && S.blocker.phase !== 'idle' && c.blocker.kind === 'slot') banned.push(S.blocker.slot);
+      const delta = botSlotDirMulti(p.slot, c.slots, threats, banned);
+      // jump straight to the target slot via its number key (same as a tap)
+      if (delta !== 0) framePressed.add(String(p.slot + delta + 1));
     }
     return;
   }
-  const zone = (S.blocker && S.blocker.phase === 'active' && c.blocker.kind === 'rail')
+  // avoid the barricade from its first warning flash, not just once it is solid
+  const warnZone = (S.blocker && S.blocker.phase !== 'idle' && c.blocker.kind === 'rail')
     ? { x: S.blocker.x, w: S.blocker.w } : null;
-  input.state.axis = botAxisFreeMulti(p.x, threats, c.rail, zone);
+  const walls = S.ports.filter(p => !p.alive && p.stuckX != null).map(p => p.stuckX);
+  const rail = (c.movement === 'free' && c.sealTide && S.sealed.length) ? sealRail(c.rail, S.sealed) : c.rail;
+  input.state.axis = botAxisFreeMulti(p.x, threats, rail, warnZone, walls);
 }
 
 const profiler = QS.get("perf") === "1" ? (await import("./perf.js")).createProfiler() : null;
@@ -1022,6 +1222,21 @@ function runFrame(now, elapsed) {
 
   dt *= nearMissSlowMo.update(realDt);
   dt = fx.update(dt) || 0; // hitstop consumes the frame
+  if (S.quiz) { // pop quiz: world frozen, plug creeping, answer to unfreeze
+    input.consume(framePressed);
+    for (const k of ['1', '2', '3']) {
+      if (framePressed.has(k)) {
+        sfx.ui();
+        const q = S.quiz;
+        if (q) resolveQuiz(+k - 1 === q.correct);
+        break;
+      }
+    }
+    framePressed.clear();
+    if (dt > 0 && S.quiz) quizUpdate(dt);
+    draw();
+    return;
+  }
   if (dt > 0) {
     S.elapsed += dt;
     S.invuln = Math.max(0, S.invuln - dt);
@@ -1031,7 +1246,28 @@ function runFrame(now, elapsed) {
     playerUpdate(dt);
     blockerUpdate(dt);
     enemyUpdate(dt);
-    if (levelWon(S.elapsed, S.misses, cfg()) && S.screen === 'playing') {
+    const qc = cfg();
+    if (qc.quiz && !S.quiz && S.screen === 'playing') {
+      S.quizT -= dt;
+      if (S.quizT <= 0) freezeQuiz();
+    }
+    if (qc.sealTide && S.screen === 'playing') {
+      S.sealT -= dt;
+      if (S.sealT <= 0) {
+        S.sealT = qc.sealTide.every;
+        const trim = pickTideTrim(qc.rail, S.sealed, qc.sealTide.chunk, qc.sealTide.minWidth, qc.sealTide.maxSide, Math.random);
+        if (trim) {
+          S.sealed.push(trim);
+          const edgeX = trim.side < 0 ? sealRail(qc.rail, S.sealed).min : sealRail(qc.rail, S.sealed).max;
+          fx.text(edgeX, EDGE_Y - 64, 'EDGE SEALED!', '#ff9f1c', 22, 1.0);
+          fx.burst(edgeX, EDGE_Y - 10, 14, { colors: ['#ff9f1c', '#ff5470'], speed: 190, ttl: 0.5, size: 3 });
+          fx.addShake(8); S.flash = Math.max(S.flash, 0.22);
+          sfx.bump();
+          updateHud();
+        }
+      }
+    }
+    if (roundWon() && S.screen === 'playing') {
       // time-based win (miss-based win handled in impact())
       if (S.mode === 'endless') {
         awardRoundClear();
@@ -1145,6 +1381,7 @@ if (QS.get('endless') === '1') {
     updateHud();
   }
   if (QS.get('flip') === '1') { S.flipLife = true; updateHud(); } // preview the earned extra life
+  if (QS.get('quiz') === '1') S.quizT = 0.1; // preview the pop-quiz freeze immediately
   // Dev/testing only: ?end=lose|win jumps straight to the end card.
   // ?dead=N pre-kills port N so you can practice the walled-survivor endgame.
   if (QS.get('end') === 'lose') {
