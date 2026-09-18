@@ -26,6 +26,7 @@ export function hopSlot(index, dir, count) {
 }
 
 export function levelWon(elapsed, misses, cfg) {
+  if (cfg.timeOnly) return elapsed >= cfg.time;
   return misses >= cfg.missesToWin || elapsed >= cfg.time;
 }
 
@@ -112,39 +113,102 @@ export function stepEnemy(E, dt, focus, cfg, roll = Math.random) {
 // Strategy: drift to mid-rail while tracked, then sprint to the spot farthest
 // from every committed strike once locked. During a blackout the locked target
 // is unknown, so the hand's own body position is read instead — exactly like
-// a human must. `blocker`: {x,w} rail zone to avoid, or null.
-export function botAxisFreeMulti(portX, threats, rail, blocker = null) {
+// a human must. `blocker`: {x,w} rail zone to avoid (pass it from the first
+// warning flash — marked ground is about to become solid), or null.
+// `walls`: dead-port stuckX positions — candidates across a wall are
+// unreachable (the survivor is clamped to its side), so the bot only ever
+// flees along its own side.
+export function botAxisFreeMulti(portX, threats, rail, blocker = null, walls = []) {
   const pos = (t) => (t.blackout && t.state === 'lock' ? (t.hx ?? t.x) : t.x);
   const active = threats.filter(t => t.state === 'lock' || t.state === 'strike');
+  // Standing on barricade ground? Leave before the shove-out pins us to an
+  // edge — a shove toward a committed threat is a free hit.
+  if (blocker && portX > blocker.x - blocker.w / 2 && portX < blocker.x + blocker.w / 2) {
+    const l = blocker.x - blocker.w / 2, r = blocker.x + blocker.w / 2;
+    const leftSpot = Math.max(rail.min, l - 40), rightSpot = Math.min(rail.max, r + 40);
+    const canL = l - 40 >= rail.min, canR = r + 40 <= rail.max;
+    let dir = (portX - l) < (r - portX) ? -1 : 1; // nearer exit
+    if (!canL) dir = 1; else if (!canR) dir = -1;
+    if (active.length) {
+      const gap = (d) => Math.min(...active.map(t => Math.abs((d < 0 ? leftSpot : rightSpot) - pos(t))));
+      if ((dir < 0 ? canR : canL) && gap(-dir) > gap(dir) + 20) dir = -dir; // safer exit wins
+    }
+    return dir;
+  }
   if (!active.length) {
     // drift mid-rail while merely tracked, but hold ground through recover:
     // wandering back to center is exactly what a queued double-jab wants
     if (threats.some(t => t.state === 'recover')) return 0;
-    const d = (rail.min + rail.max) / 2 - portX;
+    let target = (rail.min + rail.max) / 2;
+    if (blocker) {
+      // never drift INTO a solid zone — rest on the open side nearest us,
+      // otherwise the shove-out pins the port against the barricade to be hit
+      const l = blocker.x - blocker.w / 2, r = blocker.x + blocker.w / 2;
+      if (target > l && target < r) {
+        target = Math.max(rail.min, Math.min(rail.max, portX < blocker.x ? l - 40 : r + 40));
+      }
+    }
+    const d = target - portX;
     if (Math.abs(d) < 40) return 0;
     return Math.sign(d) * 0.5;
   }
   let cands = [rail.min + 60, (rail.min + rail.max) / 2, rail.max - 60];
   if (blocker) {
-    const clear = cands.filter(c => c < blocker.x - blocker.w / 2 || c > blocker.x + blocker.w / 2);
-    if (clear.length) cands = clear;
+    // a solid zone is a wall: add its edges as resting spots, drop candidates
+    // inside it, then any candidate on its far side (no crossing while solid)
+    const l = blocker.x - blocker.w / 2, r = blocker.x + blocker.w / 2;
+    cands.push(Math.min(rail.max - 5, Math.max(rail.min + 5, l - 40)),
+               Math.min(rail.max - 5, Math.max(rail.min + 5, r + 40)));
+    const outside = cands.filter(c => c < l || c > r);
+    if (outside.length) cands = outside;
+    const side = (c) => (portX < l ? c < l : portX > r ? c > r : true);
+    const sameSide = cands.filter(side);
+    if (sameSide.length) cands = sameSide;
   }
+  // a corpse-wall between us and a candidate makes it a fantasy, and its 72px
+  // no-cross gap is off-limits too — only same-side spots clear of the gap
+  const reach = (c) => walls.every(w => (portX >= w ? c >= w + WALL_GAP : c <= w - WALL_GAP));
+  const reachable = cands.filter(reach);
+  if (reachable.length) cands = reachable;
+  else {
+    // nothing in the candidate set is reachable: hug the accessible bound
+    let lo = rail.min, hi = rail.max;
+    for (const w of walls) { if (w <= portX) lo = Math.max(lo, w + WALL_GAP); else hi = Math.min(hi, w - WALL_GAP); }
+    cands = [lo, hi];
+  }
+  // never flee THROUGH a strike already in flight: the candidate on its far
+  // side means running through the strike point while it is still resolving
+  const inFlight = active.filter(t => t.state === 'strike');
+  if (inFlight.length) {
+    const crossesStrike = (c) => inFlight.some(t => { const tx = pos(t); return (tx - portX) * (tx - c) < 0; });
+    const uncrossed = cands.filter(c => !crossesStrike(c));
+    if (uncrossed.length) cands = uncrossed;
+  }
+  // Hold still only when genuinely safe. A fixed deadzone once froze the bot
+  // 36px from a 40px reticle — inside a hit window, ALWAYS move. (55 clears
+  // the widest possible window, (70+66)/2*0.7 = 47.6, with margin.)
+  const dangerHere = Math.min(...active.map(t => Math.abs(portX - pos(t))));
+  if (dangerHere > 55) return 0;
   let best = cands[0], bd = -1;
   for (const c of cands) {
     const m = Math.min(...active.map(t => Math.abs(c - pos(t))));
     if (m > bd) { bd = m; best = c; }
   }
   const d = best - portX;
-  if (Math.abs(d) < 30) return 0;
-  return Math.sign(d);
+  if (d !== 0) return Math.sign(d);
+  // parked exactly on the best spot but still endangered: slide off the nearest threat
+  const near = active.reduce((a, b) => Math.abs(portX - pos(a)) < Math.abs(portX - pos(b)) ? a : b);
+  return Math.sign(portX - pos(near)) || 1;
 }
 
-// Slots mode: single step toward the slot farthest from every committed threat.
-// No hopping while a strike is in flight (anti panic-dodge — see strikeLockout):
-// dodges must be committed during the telegraph, not after it.
-// `blocked`: seized slot index to never land on, or -1.
+// Slots mode: hop toward the safest free slot. No hopping while a strike is in
+// flight (anti panic-dodge — see strikeLockout): dodges must be committed during
+// the telegraph, not after it. Returns the signed slot delta to jump (any free
+// slot is one tap/number-key away), or 0 to hold.
+// `blocked`: slot index, array of indices, or -1 — never land on these.
 export function botSlotDirMulti(slot, slots, threats, blocked = -1) {
   if (threats.some(t => t.state === 'strike')) return 0;
+  const banned = new Set(Array.isArray(blocked) ? blocked : (blocked >= 0 ? [blocked] : []));
   const pos = (t) => (t.blackout && t.state === 'lock' ? (t.hx ?? t.x) : t.x);
   const active = threats.filter(t => t.state === 'lock');
   if (!active.length) return 0;
@@ -154,14 +218,21 @@ export function botSlotDirMulti(slot, slots, threats, blocked = -1) {
   const SAFE = 100;
   const here = Math.min(...active.map(t => Math.abs(slots[slot] - pos(t))));
   if (here > SAFE) return 0;
-  const opts = [slot - 1, slot + 1].filter(i => i >= 0 && i < slots.length && i !== blocked);
+  // Every free slot is one jump away, so consider them all — a single-step bot
+  // gets checkmated when two hands lock the only neighbours.
+  const opts = slots.map((_, i) => i).filter(i => i !== slot && !banned.has(i));
   if (!opts.length) return 0;
-  let best = opts[0], bd = -1;
+  // Score against every live hand, not just committed locks: hopping onto the
+  // slot the OTHER hand is stalking just hands it a free point-blank lock.
+  const stalkers = threats.filter(t => t.state === 'lock' || t.state === 'track');
+  let best = opts[0], bd = -1, bj = Infinity;
   for (const i of opts) {
-    const m = Math.min(...active.map(t => Math.abs(slots[i] - pos(t))));
-    if (m > bd) { bd = m; best = i; }
+    const m = Math.min(...stalkers.map(t => Math.abs(slots[i] - pos(t))));
+    const jump = Math.abs(i - slot);
+    // equally safe? take the shortest jump — less committal, harder to read
+    if (m > bd + 1e-9 || (Math.abs(m - bd) <= 1e-9 && jump < bj)) { bd = m; best = i; bj = jump; }
   }
-  return Math.sign(best - slot);
+  return best - slot;
 }
 
 // Safest free slot for panicked ejects: maximizes distance to committed threats.
@@ -281,4 +352,99 @@ export function applyDeadWalls(ports) {
     }
   }
   return bumped;
+}
+
+// --- pop quiz: procedural math questions, endless variety ---
+// genQuiz(roll) -> {a, op, b, answer, options[3], correct}.
+// Ranges keep mental math snappy (sums <= ~36, tables 2-9 x 3-7);
+// distractors are unique, non-negative, shuffled.
+export function genQuiz(roll = Math.random) {
+  const op = ['+', '−', '×'][Math.floor(roll() * 3)];
+  let a, b, ans;
+  if (op === '+') {
+    a = 3 + Math.floor(roll() * 17);
+    b = 4 + Math.floor(roll() * 14);
+    ans = a + b;
+  } else if (op === '−') {
+    a = 6 + Math.floor(roll() * 15);
+    b = 2 + Math.floor(roll() * (a - 2));
+    ans = a - b;
+  } else {
+    a = 2 + Math.floor(roll() * 8);
+    b = 3 + Math.floor(roll() * 5);
+    ans = a * b;
+  }
+  const set = new Set([ans]);
+  let guard = 0;
+  while (set.size < 3 && guard++ < 50) {
+    const d = ans + (Math.floor(roll() * 9) - 4);
+    if (d < 0 || d === ans) continue;
+    set.add(d);
+  }
+  while (set.size < 3) set.add(ans + set.size + 1); // paranoia fallback (never hit in practice)
+  const options = [...set];
+  for (let i = options.length - 1; i > 0; i--) {
+    const j = Math.floor(roll() * (i + 1));
+    [options[i], options[j]] = [options[j], options[i]];
+  }
+  return { a, op, b, answer: ans, options, correct: options.indexOf(ans) };
+}
+// --- seal tide (Seal Team): the edge gets claimed over time, tight dodges reclaim it ---
+// Free-slide flavour: a seal trims a chunk off one end of the playable rail, so
+// the field literally shrinks. `seals` are {side, w} (-1 left, +1 right).
+// pickTideTrim returns the next trim, or null once the field hits its floor or
+// one end is maxed out. Caller keeps LIFO order so reclaiming grows it back.
+export function pickTideTrim(rail, seals, chunkFrac = 0.1, minWidthFrac = 0.42, maxSideFrac = 0.3, roll = Math.random) {
+  const span = rail.max - rail.min;
+  const chunk = chunkFrac * span;
+  const trim = seals.reduce((a, s) => a + s.w, 0);
+  if (trim + chunk > (1 - minWidthFrac) * span + 1e-9) return null;
+  const left = seals.filter(s => s.side < 0).reduce((a, s) => a + s.w, 0);
+  const right = trim - left;
+  const cap = maxSideFrac * span;
+  const sides = [];
+  if (left + chunk <= cap + 1e-9) sides.push(-1);
+  if (right + chunk <= cap + 1e-9) sides.push(1);
+  const pool = sides.length ? sides : [-1, 1];
+  return { side: pool[Math.floor(roll() * pool.length)], w: chunk };
+}
+
+// Where the port can still go once the claimed ends are subtracted.
+export function sealRail(rail, seals) {
+  const left = seals.filter(s => s.side < 0).reduce((a, s) => a + s.w, 0);
+  const right = seals.filter(s => s.side > 0).reduce((a, s) => a + s.w, 0);
+  return { min: rail.min + left, max: rail.max - right };
+}
+
+// Near-miss earn-back: every 3rd CLOSE!! releases the oldest seal.
+// Returns {pips, release} — caller shifts its seal array when release is true.
+export function unsealTick(pips, sealedCount) {
+  const next = pips + 1;
+  if (next < 3) return { pips: next, release: false };
+  return { pips: 0, release: sealedCount > 0 };
+}
+
+// --- permanent seals (Crowded Edge): stuck plugs claim slots for the run ---
+// Sealed slots are impassable landing spots (same red-X language as seizures).
+// On the 5-slot rail the seal patterns always leave a connected triple so no
+// one can spawn trapped: both ends, or one end sealed shut.
+export function pickStartSeals(slots, occupied, count, roll = Math.random) {
+  if (slots.length === 5 && count === 2) {
+    const patterns = [[0, 1], [3, 4], [0, 4]].filter(p => !p.includes(occupied));
+    const pool = patterns.length ? patterns : [[0, 1]];
+    return [...pool[Math.floor(roll() * pool.length)]].sort((a, b) => a - b);
+  }
+  // generic fallback: farthest-from-occupant first, never the occupant
+  const order = slots.map((_, i) => i).filter(i => i !== occupied)
+    .sort((a, b) => Math.abs(slots[b] - slots[occupied]) - Math.abs(slots[a] - slots[occupied]));
+  return order.slice(0, Math.min(count, order.length)).sort((a, b) => a - b);
+}
+
+// --- accelerating hunter: every strike makes the next one meaner ---
+// ramp: {track, lock, trackMax, lockMin}. Mutates ep in place, clamped.
+export function applyRamp(ep, ramp) {
+  if (!ramp) return ep;
+  if (ramp.track) ep.trackSpeed = Math.min(ramp.trackMax ?? 700, ep.trackSpeed * ramp.track);
+  if (ramp.lock) ep.lockTime = Math.max(ramp.lockMin ?? 0.35, ep.lockTime * ramp.lock);
+  return ep;
 }
