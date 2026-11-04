@@ -1252,9 +1252,6 @@ function drawEnemy(E) {
     ctx.fillText(ep.plug === 'c' ? 'USB-C' : 'USB-A', hx, handY + 152);
   }
 
-  // back of the hand, behind the plug
-  inked(hx - 56, handY + 14, 112, 82, 26, skin, skinShade, 0.22);
-
   // speed lines on strike (at the sides so the fist stays readable)
   if (E.state === 'strike') {
     ctx.strokeStyle = 'rgba(26,25,22,.4)'; ctx.lineWidth = 2;
@@ -1264,29 +1261,69 @@ function drawEnemy(E) {
   }
   (ep.plug === 'c' ? drawUSBCStick : drawUSBStick)(ctx, hx, tipY, plugW, E.accent);
 
-  // Fingers wrap across the plug body, so from the front they read as four
-  // stacked bands (index on top, pinky at the bottom) with knuckles on the right.
-  const fingers = [[26, 104], [42, 106], [58, 100], [73, 88]];
-  for (const [fy, fw] of fingers) {
-    const fx = hx - 52, fh = 17;
-    rr(fx, handY + fy, fw, fh, 8.5);
-    ctx.fillStyle = skin; ctx.fill();
-    ctx.save(); ctx.clip();
-    ctx.fillStyle = skinShade; ctx.fillRect(fx, handY + fy + fh * 0.62, fw, fh);
-    ctx.restore();
-    ctx.strokeStyle = C.ink; ctx.lineWidth = 1.5; ctx.stroke();
-    // middle-joint crease near the knuckle end
-    ctx.strokeStyle = 'rgba(26,25,22,.4)'; ctx.lineWidth = 1.2;
-    ctx.beginPath(); ctx.moveTo(fx + fw - 22, handY + fy + 4); ctx.quadraticCurveTo(fx + fw - 19, handY + fy + fh / 2, fx + fw - 22, handY + fy + fh - 4); ctx.stroke();
+  // The fist is one silhouette, not four outlined fingers: knuckle bumps step
+  // down the outer edge toward the pinky, and short creases only hint at the
+  // finger divisions. Outlining each finger is what made them read as sausages.
+  const L = hx - 54, T = handY + 24, B = handY + 90, R = hx + 46, seg = (B - T) / 4;
+  const knuckle = (i) => R - i * 4; // each finger a little shorter than the last
+  ctx.beginPath();
+  ctx.moveTo(L + 16, T);
+  ctx.lineTo(knuckle(0) - 10, T);
+  for (let i = 0; i < 4; i++) {
+    const y0 = T + i * seg, y1 = y0 + seg, kx = knuckle(i);
+    ctx.bezierCurveTo(kx + 6, y0 + 1, kx + 9 - i, y1 - 2, kx - (i === 3 ? 12 : 3), y1);
   }
-  // thumb runs up the near side and presses on the plug body, nail at the top
-  ctx.save();
-  ctx.translate(hx - 46, handY + 44); ctx.rotate(0.12);
-  inked(-12, -34, 24, 62, 12, skin, skinShade, 0.3);
-  inked(-7, -30, 14, 12, [6, 6, 3, 3], '#efcfb2');
-  ctx.strokeStyle = 'rgba(26,25,22,.4)'; ctx.lineWidth = 1.2;
-  ctx.beginPath(); ctx.moveTo(-7, -6); ctx.quadraticCurveTo(0, -3, 7, -6); ctx.stroke();
+  ctx.lineTo(L + 18, B);
+  ctx.quadraticCurveTo(L, B, L, B - 18);
+  ctx.lineTo(L, T + 16);
+  ctx.quadraticCurveTo(L, T, L + 16, T);
+  ctx.closePath();
+  ctx.fillStyle = skin; ctx.fill();
+  ctx.save(); ctx.clip();
+  ctx.fillStyle = skinShade; ctx.fillRect(L, B - 13, R - L + 20, 20);
   ctx.restore();
+  ctx.strokeStyle = C.ink; ctx.lineWidth = 1.5; ctx.stroke();
+  // finger creases: start at each joint on the knuckle edge, fade out part-way in
+  ctx.strokeStyle = 'rgba(26,25,22,.45)'; ctx.lineWidth = 1.3;
+  for (let i = 0; i < 3; i++) {
+    const y = T + (i + 1) * seg, kx = knuckle(i) - 3;
+    ctx.beginPath(); ctx.moveTo(kx, y); ctx.quadraticCurveTo(kx - 18, y + 2, kx - 40 + i * 4, y + 1); ctx.stroke();
+  }
+  // middle-joint fold, one soft line down the knuckle side
+  ctx.strokeStyle = 'rgba(26,25,22,.25)';
+  ctx.beginPath(); ctx.moveTo(R - 16, T + 6); ctx.quadraticCurveTo(R - 20, (T + B) / 2, R - 26, B - 8); ctx.stroke();
+  // The thumb grows out of the fist: wide at the base, tapering to the tip on
+  // the plug. Only its outer edge and tip are inked; the inner edge is a crease
+  // that fades out where it joins the hand, so it reads as attached.
+  const thumbTop = handY + 5;
+  const base = [L + 2, B - 14], outerTop = [L - 5, T + 2], tipL = [L + 4, thumbTop + 6], tipR = [L + 25, thumbTop + 7];
+  const inner = [L + 30, T + 18], seam = [L + 22, B - 22];
+  const thumbPath = () => {
+    ctx.beginPath();
+    ctx.moveTo(...base);
+    ctx.bezierCurveTo(L - 7, B - 38, L - 8, T + 18, ...outerTop);
+    ctx.bezierCurveTo(L - 3, T - 8, L - 2, thumbTop + 12, ...tipL);
+    ctx.bezierCurveTo(L + 8, thumbTop - 2, L + 22, thumbTop - 2, ...tipR);
+    ctx.bezierCurveTo(L + 29, thumbTop + 12, L + 31, T + 6, ...inner);
+  };
+  thumbPath();
+  ctx.quadraticCurveTo(L + 29, B - 34, ...seam);
+  ctx.closePath();
+  ctx.fillStyle = skin; ctx.fill();
+  // a sliver of shade under the thumb's inner edge gives it some depth
+  ctx.save(); ctx.clip();
+  ctx.fillStyle = skinShade; ctx.fillRect(L + 22, T - 4, 12, B - T);
+  ctx.restore();
+  thumbPath();
+  ctx.strokeStyle = C.ink; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.strokeStyle = 'rgba(26,25,22,.35)'; ctx.lineWidth = 1.3;
+  ctx.beginPath(); ctx.moveTo(...inner); ctx.quadraticCurveTo(L + 29, B - 34, ...seam); ctx.stroke();
+  // nail, and the knuckle fold below it
+  rr(L + 6, thumbTop + 3, 15, 11, [6, 6, 3, 3]);
+  ctx.fillStyle = '#efcfb2'; ctx.fill();
+  ctx.strokeStyle = 'rgba(26,25,22,.55)'; ctx.lineWidth = 1.2; ctx.stroke();
+  ctx.strokeStyle = 'rgba(26,25,22,.3)';
+  ctx.beginPath(); ctx.moveTo(L + 2, T + 6); ctx.quadraticCurveTo(L + 12, T + 9, L + 24, T + 6); ctx.stroke();
 
   // tracking: a dashed ring says "it's looking for you", without claiming a target yet
   if (E.state === 'track') {
