@@ -46,7 +46,7 @@ advances you. Lose a level when all your ports get plugged.
 | 1 · First Boot | free sliding, one slow human, long telegraphs |
 | 2 · Cornered | no more sliding — teleport between 5 slots; faster hand, occasional double-jabs, and **no panic-hops**: teleports fizzle while a strike is in flight (`TOO LATE!`), so dodges must be committed during the telegraph |
 | 3 · Double Trouble | two ports, one shared command — a dead port's cable becomes a **wall** the survivor can't cross. **Clearing it earns the FLIP-FLOP extra life.** |
-| 4 · Two Hands | two ports vs **two humans** — survive **25s**. Lose one port and *both* hands hunt the survivor, now cornered by its partner's corpse. Your ports hang **upside-down**: the first plug is absorbed (`FLIP SAVED YOU!`) plus 1s of phase-out. Humans also **barricade 20% of the edge** in striped `NOPE` zones |
+| 4 · Two Hands | two ports vs **two humans** with different plugs: a USB‑A **bruiser** (long wind-up, never doubles) and a late USB‑C **jabber** (narrow amber plug, short warning, quick recovery, frequent doubles) — survive **25s**. Lose one port and *both* hands hunt the survivor, now cornered by its partner's corpse. Your ports hang **upside-down**: the first plug is absorbed (`FLIP SAVED YOU!`) plus 1s of phase-out. Humans also **barricade 20% of the edge** in striped `NOPE` zones |
 | 5 · Blackout | back to one port in the slots — survive **40s**, but the hand's **crosshair cuts out at random** (read the fist's drift, not the marker), and **one slot at a time gets seized** (flashing `!` warning, then red `✕`; campers get `EJECTED!` to the safest free slot) |
 | 6 · Crowded Edge | two slots come **pre-sealed** by stuck plugs (always leaving a connected triple), and the lone hunter **accelerates every strike** (track ×1.05, lock ×0.96, capped) — end it quickly |
 | 7 · Pop Quiz | time **freezes** and every plug creeps toward the port you're on — answer the procedurally generated math (**+−×**, infinite variety) to unfreeze for **+50**. Wrong or timeout earns every hand a point-blank 0.35s lock |
@@ -67,7 +67,9 @@ dicey — endless is meant to end your run eventually.
   telegraphs (floor 0.42s), more double-jabs (cap 0.45) and blackouts (cap 0.5),
   fatter plugs (cap 70px)
 - extra hands join later in a run (a second at round 17, a third at round 33;
-  max 3 free / 2 slots), barricades spread to every archetype from round 17
+  max 3 free / 2 slots); the first late joiner is a USB‑C jabber, and the
+  Two Hands pair, which already mixes plugs, waits until round 33 for a third.
+  Barricades spread to every archetype from round 17
 
 Scoring (both modes): **+100** per forced miss, **+150** per near-miss,
 floating `+100` text on every dodge, clear bonus **500 + 100 per
@@ -176,9 +178,9 @@ proven and any of those earn their place.
 ## Next mechanics worth exploring
 
 1. Port-switching / split controls for multi-port play (vs. the shared command).
-2. Distinct plug personalities on the two-hand chassis (e.g. a fast USB-C
-   jabber vs. a slow USB-A bruiser — `hands[]` overrides already support this;
-   blackout would suit the jabber).
+2. More plug personalities. USB‑A and USB‑C exist (`handParams` in `logic.js`,
+   a `plug` key on any `hands[]` entry); candidates are a blackout-prone jabber
+   for L5, a micro-USB that only fits one way round, and a Lightning bully.
 3. Narrow-escape slow-mo (near-miss already detected — `resolveStrike` returns `'near'`).
 4. Real player tuning pass: L4's barricades, L5's blackout rate and L8's trim
    pace are sim-fair for perfect play; humans need playtesting. Current

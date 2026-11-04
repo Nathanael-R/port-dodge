@@ -43,8 +43,8 @@ export const LEVELS = [
     enemy: { trackTime: 0.95, lockTime: 0.62, strikeTime: 0.18, recoverTime: 0.62,
              trackSpeed: 450, lead: 0.3, plugW: 56, startDelay: 0.8, doubles: 0.25 },
     hands: [
-      { startDelay: 0.8 },
-      { startDelay: 2.4, trackSpeed: 420, lockTime: 0.7 }, // second human: later, lazier, harder to bait both at once
+      { startDelay: 0.8, plug: 'a' }, // bruiser: slow, honest wind-up, one strike at a time
+      { startDelay: 2.4, plug: 'c' }, // jabber: narrow plug, quick warning, joins late
     ],
     blocker: { kind: 'rail', frac: 0.2, warn: 1.0, dur: 4.5, gap: 5 },
     slots: [160, 320, 480, 640, 800],
@@ -138,10 +138,14 @@ export function buildEndlessRound(round) {
   // (Round 6/14/15 proved loop-1 bonus hands turn scaled duos into attrition.)
   const baseHands = base.hands || [{}];
   const wantHands = Math.min(base.movement === 'slots' ? 2 : 3,
-    baseHands.length + (loop >= 2 ? 1 : 0) + (loop >= 4 ? 1 : 0));
+    // a base pair that already mixes plug personalities waits until loop 4 for a third
+    baseHands.length + (loop >= (baseHands.some(h => h.plug) ? 4 : 2) ? 1 : 0) + (loop >= 4 ? 1 : 0));
   const hands = baseHands.map(h => ({ ...h }));
   while (hands.length < wantHands) {
-    hands.push({ startDelay: 1.2 + hands.length, trackSpeed: Math.round(e.trackSpeed * 0.95) });
+    // the first late joiner is a USB-C jabber (unless one is already here), so a
+    // crowded round mixes rhythms without stacking two quick hands
+    const jab = !hands.some(h => h.plug === 'c');
+    hands.push({ startDelay: 1.2 + hands.length, trackSpeed: Math.round(e.trackSpeed * 0.95), ...(jab ? { plug: 'c' } : {}) });
   }
   // blockers spread to every archetype from loop 2, and intensify
   let blocker = base.blocker ? { ...base.blocker } : null;

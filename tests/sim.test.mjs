@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { LEVELS, buildEndlessRound, endlessClearBonus, SCORE, ENDLESS_ORDER } from '../src/levels.js';
 import {
-  createEnemy, stepEnemy, separateEnemies, stepFree, hopSlot, resolveStrike,
+  createEnemy, handParams, stepEnemy, separateEnemies, stepFree, hopSlot, resolveStrike,
   levelWon, botAxisFreeMulti, botSlotDirMulti, strikeLockout, absorbHit,
   applyDeadWalls, WALL_GAP, createBlocker, stepBlocker, pushOutOfZone, safestSlot,
   pickStartSeals, applyRamp, genQuiz, pickTideTrim, sealRail, unsealTick,
@@ -32,7 +32,7 @@ function setup(cfg, roll = NO_DOUBLES) {
   }
   const enemies = (cfg.hands || [{}]).map((h, i) => {
     const E = createEnemy(480 + (i === 0 ? 0 : (i % 2 ? 150 : -150)), h.startDelay ?? cfg.enemy.startDelay);
-    E.ep = { ...cfg.enemy, ...h };
+    E.ep = handParams(cfg.enemy, h);
     return E;
   });
   return { cfg, rail, ports, center, slot, hopCd, enemies, blocker: createBlocker(cfg.blocker), sealed };

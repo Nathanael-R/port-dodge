@@ -69,6 +69,54 @@ export function drawUSBStick(ctx, x, y, width, accent = '#dd4a1f') {
   ctx.drawImage(sprite, x - width / 2 - 14, y, width + 28, 132);
 }
 
+// USB-C: a short, fully rounded steel tip on a slim overmold. Same 132px
+// footprint and tip origin as USB-A, so the hand choreography is shared;
+// the narrow silhouette is the tell that its hit window is narrow too.
+export function drawUSBCStick(ctx, x, y, width, accent = '#e2a72e') {
+  const key = `c:${width}:${accent}`;
+  let sprite = sprites.get(key);
+  if (!sprite) {
+    sprite = document.createElement('canvas');
+    sprite.width = (width + 28) * 2; sprite.height = 132 * 2;
+    const g = sprite.getContext('2d');
+    g.scale(2, 2);
+    const left = 14, center = left + width / 2;
+    const round = (x, y, w, h, r, color) => {
+      g.fillStyle = color; g.beginPath(); g.roundRect(x, y, w, h, r); g.fill();
+    };
+
+    // Slim strain relief.
+    round(center - 8, 106, 16, 24, 4, '#111814');
+    for (let i = 0; i < 3; i++) round(center - 7, 113 + i * 5, 14, 2, 1, '#38423c');
+
+    // Steel tip: short, rounded on top, one seam and a bright edge.
+    const metal = g.createLinearGradient(left, 0, left + width, 0);
+    metal.addColorStop(0, '#7d8b86'); metal.addColorStop(.12, '#dde5df');
+    metal.addColorStop(.45, '#b2bfb8'); metal.addColorStop(.7, '#eef3ec');
+    metal.addColorStop(1, '#727f79');
+    g.fillStyle = metal; g.beginPath();
+    g.roundRect(left, 6, width, 44, [Math.min(10, width / 3), Math.min(10, width / 3), 2, 2]); g.fill();
+    round(left + 4, 7, width - 8, 1.5, 1, '#f8fff1');
+    g.fillStyle = '#2a3a3340'; g.fillRect(left + 3, 30, width - 6, 1);
+    // Recessed contact slot seen through the shell face.
+    round(center - width * .28, 14, width * .56, 9, 4.5, '#1a2821');
+    round(center - width * .18, 17.5, width * .36, 2, 1, '#6f8a7e');
+
+    // Overmold: slimmer and taller than USB-A, with the colored shoulder.
+    round(left - 4, 46, width + 8, 64, 10, '#0a100d');
+    const body = g.createLinearGradient(left, 48, left + width, 108);
+    body.addColorStop(0, '#46564c'); body.addColorStop(.45, '#28382e'); body.addColorStop(1, '#142019');
+    round(left - 3, 47, width + 6, 61, 9, body);
+    round(left - 1, 48, width + 2, 5, 2.5, accent);
+    g.fillStyle = '#ffffff12'; g.fillRect(left + 2, 58, 1, 44);
+    // Engraved receptacle outline instead of the USB-A trident.
+    g.strokeStyle = '#a6b9a0'; g.lineWidth = 1.4;
+    g.beginPath(); g.roundRect(center - 7, 75, 14, 6, 3); g.stroke();
+    sprites.set(key, sprite);
+  }
+  ctx.drawImage(sprite, x - width / 2 - 14, y, width + 28, 132);
+}
+
 const portSprites = new Map();
 
 // The socket's static machining is cached; eyes and reaction poses stay live.

@@ -1,10 +1,10 @@
 import { createFrameScheduler, canvasSize } from './runtime.js';
-import { drawUSBStick, drawUSBPort } from './usb-art.js';
+import { drawUSBStick, drawUSBCStick, drawUSBPort } from './usb-art.js';
 import { createInput } from './input.js';
 import { sfx, toggleMute, unlockAudio, suspendAudio } from './audio.js';
 import { detectOS, osCopy } from './os.js';
 import { LEVELS, buildEndlessRound, endlessClearBonus, SCORE } from './levels.js';
-import { W, H, EDGE_Y, resolveStrike, hopSlot, levelWon, stepFree, createEnemy, stepEnemy, separateEnemies, botAxisFreeMulti, botSlotDirMulti, strikeLockout, absorbHit, applyDeadWalls, createBlocker, stepBlocker, pushOutOfZone, safestSlot, pickStartSeals, applyRamp, genQuiz, pickTideTrim, sealRail, unsealTick } from './logic.js';
+import { W, H, EDGE_Y, handParams, resolveStrike, hopSlot, levelWon, stepFree, createEnemy, stepEnemy, separateEnemies, botAxisFreeMulti, botSlotDirMulti, strikeLockout, absorbHit, applyDeadWalls, createBlocker, stepBlocker, pushOutOfZone, safestSlot, pickStartSeals, applyRamp, genQuiz, pickTideTrim, sealRail, unsealTick } from './logic.js';
 import { createFX, createNearMissSlowMo } from './fx.js';
 
 const canvas = document.getElementById('game');
@@ -163,9 +163,9 @@ function setupRound(c) {
   // one FSM per hand; extra hands stagger in and may tune the base params
   S.enemies = (c.hands || [{}]).map((h, i) => {
     const E = createEnemy(480 + (i === 0 ? 0 : (i % 2 ? 150 : -150)), h.startDelay ?? e.startDelay);
-    E.ep = { ...e, ...h };
+    E.ep = handParams(e, h);
     E.sleeve = i === 0 ? '#34405a' : '#6b3b2c'; // second human wears a rust sleeve
-    E.accent = i === 0 ? C.signal : C.caution;  // ...and holds an amber plug
+    E.accent = E.ep.plug === 'c' ? C.caution : C.signal; // jabbers carry an amber plug
     E.tipY = restTipY();
     return E;
   });
@@ -232,6 +232,9 @@ function briefRows(c) {
   rows.push(['To clear', c.timeOnly ? `Survive ${c.time} seconds.` : `Survive ${c.time} seconds, or make the hand miss ${c.missesToWin} times.`]);
   const hands = (c.hands || [{}]);
   if (hands.length > 1) rows.push(['Opponents', `${hands.length} hands, each chasing whichever port is closest.`]);
+  const plugs = new Set(hands.map(h => h.plug).filter(Boolean));
+  if (plugs.has('a')) rows.push(['USB-A', 'The bruiser. Full-width plug and a long wind-up, one strike at a time.']);
+  if (plugs.has('c')) rows.push(['USB-C', 'The jabber. Amber, narrow and quick: a short warning, a tight ring, and it often strikes twice.', 'warn']);
   if (hands.some(h => ((h.blackout ?? c.enemy.blackout) || 0) > 0)) rows.push(['Blackout', 'The crosshair sometimes cuts out. Read where the fist is drifting.', 'warn']);
   if (c.blocker) rows.push(c.blocker.kind === 'slot'
     ? ['Seized slot', 'One slot at a time gets taken. Leave when it flashes or you will be ejected.', 'warn']
@@ -345,6 +348,7 @@ function roundTags(c) {
   const tags = [];
   const hands = (c.hands || [{}]).length;
   if (hands > 1) tags.push(`${hands} HANDS`);
+  if ((c.hands || []).some(h => h.plug === 'c')) tags.push('USB-C');
   const bo = c.enemy.blackout || 0;
   if (bo > 0) tags.push(`blackout ${Math.round(bo * 100)}%`);
   if (c.blocker) tags.push(c.blocker.kind === 'slot' ? 'seized slots' : 'barricades');
@@ -486,7 +490,7 @@ function enemyUpdate(dt) {
 
     const ev = stepEnemy(E, dt, { x: focus?.x ?? E.x, v: focus?.vx || 0 }, c);
     for (const e of ev) {
-      if (e === 'locked') { sfx.lock(); S.tickAcc = 0; }
+      if (e === 'locked') { sfx.lock(E.ep?.plug === 'c'); S.tickAcc = 0; }
       if (e === 'struck') sfx.whoosh();
       if (e === 'impact') impact(E);
     }
@@ -1179,7 +1183,12 @@ function drawEnemy(E) {
       ctx.beginPath(); ctx.moveTo(sx, py + 184); ctx.lineTo(sx, py + 104); ctx.stroke();
     }
   }
-  drawUSBStick(ctx, hx, py, plugW, E.accent);
+  (ep.plug === 'c' ? drawUSBCStick : drawUSBStick)(ctx, hx, py, plugW, E.accent);
+  // personality hands print their plug type on the cuff
+  if (ep.plug) {
+    ctx.fillStyle = 'rgba(236,232,223,.7)'; ctx.font = mono(11, 600); ctx.textAlign = 'center';
+    ctx.fillText(ep.plug === 'c' ? 'USB-C' : 'USB-A', hx, handY + 142);
+  }
 
   // tracking: a dashed ring says "it's looking for you", without claiming a target yet
   if (E.state === 'track') {
@@ -1203,7 +1212,8 @@ function drawTelegraph(E) {
     ctx.setLineDash([]);
     // reticle on the edge
     ctx.strokeStyle = C.signal; ctx.lineWidth = 3;
-    const r = 26 + pulse * 8;
+    // the ring matches this plug's real width, so a USB-C lock looks as tight as it is
+    const r = ((E.ep || cfg().enemy).plugW * 0.5 + 2) + pulse * 6;
     ctx.beginPath(); ctx.arc(tx, EDGE_Y - 8, r, 0, Math.PI * 2); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(tx - r - 8, EDGE_Y - 8); ctx.lineTo(tx - r + 4, EDGE_Y - 8);
     ctx.moveTo(tx + r - 4, EDGE_Y - 8); ctx.lineTo(tx + r + 8, EDGE_Y - 8); ctx.stroke();

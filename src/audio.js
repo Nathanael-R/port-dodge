@@ -63,7 +63,7 @@ function noise(dur = 0.2, vol = 0.4, filterFreq = 1200, delay = 0) {
 export const sfx = {
   ui() { tone(660, 0.07, 'square', 0.3); },
   tick(n = 0) { tone(880 + (n % 4) * 120, 0.05, 'square', 0.25); },
-  lock() { tone(220, 0.25, 'sawtooth', 0.35, 440); },
+  lock(quick = false) { quick ? tone(330, 0.15, 'sawtooth', 0.32, 720) : tone(220, 0.25, 'sawtooth', 0.35, 440); },
   whoosh() { noise(0.22, 0.5, 900); tone(300, 0.2, 'sawtooth', 0.2, 900); },
   clang() { noise(0.18, 0.6, 2400); tone(180, 0.2, 'square', 0.4, 90); tone(1250, 0.08, 'square', 0.2); },
   nearMiss() { tone(1200, 0.09, 'sine', 0.4, 1800); tone(1600, 0.12, 'sine', 0.35, 2200, 0.08); },
