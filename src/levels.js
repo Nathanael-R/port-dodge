@@ -2,7 +2,7 @@
 // movement: 'free' | 'slots' | 'duo' (duo = 2 ports, shared command)
 export const LEVELS = [
   {
-    id: 1, name: 'FIRST BOOT', sub: 'free movement — outrun the hand',
+    id: 1, name: 'FIRST BOOT', sub: 'One slow hand and long warnings. Learn the rhythm.',
     movement: 'free',
     time: 30, missesToWin: 5,
     rail: { min: 90, max: 870 },
@@ -13,7 +13,7 @@ export const LEVELS = [
     slots: [160, 320, 480, 640, 800],
   },
   {
-    id: 2, name: 'CORNERED', sub: 'teleport between port slots — Q/E or ←/→ or tap',
+    id: 2, name: 'CORNERED', sub: 'No more sliding. You live in the slots now.',
     movement: 'slots',
     time: 32, missesToWin: 7,
     rail: { min: 90, max: 870 },
@@ -24,7 +24,7 @@ export const LEVELS = [
     slots: [150, 305, 480, 655, 810],
   },
   {
-    id: 3, name: 'DOUBLE TROUBLE', sub: 'experiment: two ports, one command — keep at least one alive',
+    id: 3, name: 'DOUBLE TROUBLE', sub: 'Two ports on one command. Keep at least one of them alive.',
     movement: 'duo',
     time: 40, missesToWin: 8,
     rail: { min: 90, max: 870 },
@@ -35,7 +35,7 @@ export const LEVELS = [
     slots: [160, 320, 480, 640, 800],
   },
   {
-    id: 4, name: 'TWO HANDS', sub: 'two ports, two humans — lose one and BOTH hands hunt the survivor',
+    id: 4, name: 'TWO HANDS', sub: 'Two ports against two people. Lose one and both hands come for the other.',
     movement: 'duo',
     time: 25, timeOnly: true,
     rail: { min: 90, max: 870 },
@@ -50,7 +50,7 @@ export const LEVELS = [
     slots: [160, 320, 480, 640, 800],
   },
   {
-    id: 5, name: 'BLACKOUT', sub: 'the crosshairs cut out — read the hand, not the marker',
+    id: 5, name: 'BLACKOUT', sub: 'The crosshairs cut out. Watch the hand, not the marker.',
     movement: 'slots',
     time: 40, timeOnly: true,
     rail: { min: 90, max: 870 },
@@ -63,7 +63,7 @@ export const LEVELS = [
     slots: [150, 305, 480, 655, 810],
   },
   {
-    id: 6, name: 'CROWDED EDGE', sub: 'two slots come pre-sealed — and the hunter gets faster every strike',
+    id: 6, name: 'CROWDED EDGE', sub: 'Two slots are already taken, and the hunter speeds up with every strike.',
     movement: 'slots',
     time: 35, timeOnly: true,
     rail: { min: 90, max: 870 },
@@ -76,7 +76,7 @@ export const LEVELS = [
     slots: [150, 305, 480, 655, 810],
   },
   {
-    id: 7, name: 'POP QUIZ', sub: 'time freezes, the plug creeps — do the math to unfreeze it',
+    id: 7, name: 'POP QUIZ', sub: 'Time freezes, the plug creeps closer, and there is arithmetic.',
     movement: 'slots',
     time: 35, timeOnly: true,
     rail: { min: 90, max: 870 },
@@ -88,7 +88,7 @@ export const LEVELS = [
     slots: [150, 305, 480, 655, 810],
   },
   {
-    id: 8, name: 'SEAL TEAM', sub: 'free slide — the edge gets sealed; tight dodges reclaim it',
+    id: 8, name: 'SEAL TEAM', sub: 'The edge is being sealed off. Close calls win it back.',
     movement: 'free',
     time: 38, timeOnly: true,
     rail: { min: 90, max: 870 },

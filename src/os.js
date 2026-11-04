@@ -20,28 +20,28 @@ export function detectOS(nav = (typeof navigator !== 'undefined' ? navigator : u
 // Parody hardware + one-liners per OS. 'other' falls back to windows styling.
 export const OS_COPY = {
   mac: {
-    brand: '◉ MacLap Pro',
+    brand: 'MacLap Pro',
     sub: 'USB-C only · dongles sold separately',
-    foot: '🍎 Mac detected — the hand bills by the hour, plus dongle fees.',
+    foot: 'Mac detected. The hand bills by the hour, plus dongle fees.',
     edge: ['#e8edff', '#9aa5c4'],
     dot: true, // traffic lights on the lid
   },
   windows: {
-    brand: '▦ WinLap 11',
+    brand: 'WinLap 11',
     sub: 'have you tried turning it off and on again',
-    foot: '▦ Windows detected — the hand will restart after updates. Twice.',
+    foot: 'Windows detected. The hand will restart after updates. Twice.',
     edge: ['#4cc2ff', '#9beaff'],
     dot: false,
   },
   linux: {
-    brand: '$ penglap — btw',
+    brand: '$ penglap --btw',
     sub: 'i use arch btw · sudo dodge',
-    foot: '🐧 Linux detected — the hand compiled itself from source.',
+    foot: 'Linux detected. The hand compiled itself from source.',
     edge: ['#7bff9e', '#4cc2ff'],
     dot: false,
   },
   other: {
-    brand: '◉ LAPTOP-9000',
+    brand: 'LAPTOP-9000',
     sub: 'do NOT lick the ports',
     foot: '',
     edge: ['#4dd8ff', '#9beaff'],

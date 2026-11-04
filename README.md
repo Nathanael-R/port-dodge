@@ -85,14 +85,14 @@ under 6s) and miss pips; cards dim the stage behind them.
 ## OS flavor
 
 The game sniffs your OS (`src/os.js`: `userAgentData.platform` with UA
-fallback) and reskins around it — parody hardware on the laptop lid, edge
-glow tint, page accent + corner radius, footer one-liner:
+fallback) and adds parody hardware on the laptop lid, a tinted hairline on the
+edge, and a footer one-liner:
 
-| OS | Laptop | Accent |
+| OS | Laptop | Edge tint |
 |---|---|---|
-| mac | ◉ MacLap Pro + traffic lights, "USB-C only · dongles sold separately" | ice blue, extra round, cards get traffic lights |
-| windows | ▦ WinLap 11, "have you tried turning it off and on again" | fluent blue, squarer |
-| linux | `$ penglap — btw`, "i use arch btw · sudo dodge" | terminal green, mono keycaps |
+| mac | MacLap Pro + traffic lights, "USB-C only · dongles sold separately" | ice blue |
+| windows | WinLap 11, "have you tried turning it off and on again" | fluent blue |
+| linux | `$ penglap --btw`, "i use arch btw · sudo dodge" | terminal green |
 
 Preview any flavor with `?os=mac|windows|linux`.
 
@@ -190,8 +190,14 @@ proven and any of those earn their place.
 
 ## UI polish and rendering pass
 
-The arcade shell now uses charcoal/lime, compact level progress, distinct score and
-dodge counters, short onboarding, result statistics, and mobile-safe overlays.
+The shell is styled as a printed operating manual: warm paper, black ink, and one
+signal orange reserved for danger (the lock reticle, lost ports, the low timer).
+Type is Archivo (condensed for headings and readouts) with IBM Plex Mono for labels,
+loaded from Google Fonts with system fallbacks. The HUD is a ruled readout strip,
+level briefings and results are spec tables, and the menu shows the port and hand as
+an annotated figure. The canvas follows the same palette: a graphite laptop over a
+graph-paper desk, hazard-tape barricades, and floating callouts drawn as solid
+label chips so they read on either surface.
 Pause is available on screen and via P/Esc; Help pauses without discarding the run.
 Menus manage keyboard focus; button feedback and short entrances respect reduced
 motion, which also suppresses camera shake and reduces decorative particles.

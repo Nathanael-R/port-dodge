@@ -1,7 +1,7 @@
 // Cached, high-density USB-A artwork. Logical tip and metal width match collision geometry.
 const sprites = new Map();
 
-export function drawUSBStick(ctx, x, y, width, accent = '#d6fa72') {
+export function drawUSBStick(ctx, x, y, width, accent = '#dd4a1f') {
   const key = `${width}:${accent}`;
   let sprite = sprites.get(key);
   if (!sprite) {
@@ -107,7 +107,7 @@ export function drawUSBPort(ctx, x, y, width, height, alive = true) {
     // Tiny side retaining clips and a power/status LED.
     round(6, height / 2 + 2, 2, 5, 1, '#d0ded070');
     round(width, height / 2 + 2, 2, 5, 1, '#d0ded050');
-    round(width - 2, 5, 3, 1.5, .75, alive ? '#d6fa72' : '#ff6e72');
+    round(width - 2, 5, 3, 1.5, .75, alive ? '#7bd389' : '#ff6e72');
     portSprites.set(key, sprite);
   }
   ctx.drawImage(sprite, x - width / 2 - 4, y - 4, width + 8, height + 8);
