@@ -64,10 +64,11 @@ kbd + kbd{margin-left:3px}
 #stage{position:relative;isolation:isolate;overflow:hidden;margin-top:18px;container-type:inline-size;background:var(--paper-2);border:1px solid var(--rule)}
 canvas{display:block;width:100%;height:auto;aspect-ratio:16/9;touch-action:none;background:var(--paper-2)}
 #stage.has-overlay canvas{position:absolute;inset:0;height:100%;object-fit:cover}
+#stage.has-overlay:has(.menu-card) canvas{object-position:right center}
 #overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
 #stage.has-overlay #overlay{position:relative;aspect-ratio:16/9;padding:20px}
 #overlay.dim{background:rgba(236,232,223,.88)}
-#overlay:has(.menu-card),#stage.has-overlay #overlay:has(.menu-card){background:none;justify-content:flex-start;align-items:stretch;padding:0}
+#overlay:has(.menu-card),#stage.has-overlay #overlay:has(.menu-card){background:none;justify-content:flex-start;align-items:stretch;padding:0;aspect-ratio:auto;min-height:56.25cqi}
 
 /* ---------- cards ---------- */
 .card{pointer-events:auto;background:var(--paper);border:1px solid var(--rule);border-radius:2px;width:100%;max-width:560px;padding:0 28px 26px}

@@ -539,6 +539,7 @@ function impact(E) {
     if (res === 'shielded') {
       // FLIP-FLOP absorbs the plug: port flips right-side up, phases out briefly
       S.flipLife = false; S.invuln = 1.0;
+      setMood(victim, 'wince', 1.0);
       fx.text(victim.x, 300, 'SAVED BY THE FLIP', C.good, 30, 1.2);
       fx.sparks(E.lockedX, EDGE_Y + 8);
       fx.addShake(8); fx.stop(0.15);
@@ -564,6 +565,9 @@ function impact(E) {
   } else {
     S.misses++;
     S.score += outcome === 'near' ? SCORE.NEAR : SCORE.MISS;
+    // the port that nearly got it winces; everyone else is just relieved
+    const closest = S.ports.filter(p => p.alive).reduce((a, b) => !a || Math.abs(b.x - E.lockedX) < Math.abs(a.x - E.lockedX) ? b : a, null);
+    for (const p of S.ports) setMood(p, outcome === 'near' && p === closest ? 'wince' : 'relief', 0.7);
     S.dents.push({ x: E.lockedX, t: 0 });
     if (outcome === 'near') {
       fx.text(E.lockedX, 300, `CLOSE CALL +${SCORE.NEAR}`, C.good, 26, 1.0);
@@ -736,6 +740,7 @@ function playerUpdate(dt) {
     const denyHop = (reason) => {
       if (S.denyCd > 0) return;
       S.denyCd = 0.5;
+      setMood(p, 'strain', 0.4);
       fx.text(p.x, EDGE_Y - 64, reason, C.signal, 19, 0.6);
       fx.burst(p.x, EDGE_Y - 10, 6, { colors: [C.signal, C.ink], speed: 140, ttl: 0.3, size: 3 });
       sfx.deny();
@@ -822,6 +827,7 @@ function playerUpdate(dt) {
         fx.burst(wall ? wall.stuckX : S.center.x, EDGE_Y - 6, 6, { colors: [C.caution, C.ink], speed: 150, ttl: 0.35, size: 3 });
         sfx.bump();
         S.bumpCd = 0.35;
+        for (const p of S.ports) setMood(p, 'strain', 0.4);
       }
     } else {
       const p = S.ports[0];
@@ -829,12 +835,25 @@ function playerUpdate(dt) {
       p.squash = Math.min(1, Math.abs(p.vx) / 560);
       if (S.blocker && S.blocker.phase === 'active' && c.blocker && c.blocker.kind === 'rail') {
         const r = pushOutOfZone(p.x, { x: S.blocker.x, w: S.blocker.w });
-        if (r.moved) { p.x = r.x; S.center.x = r.x; }
+        if (r.moved) { p.x = r.x; S.center.x = r.x; setMood(p, 'strain', 0.3); }
       }
     }
   }
-  // squash decay
-  for (const p of S.ports) { p.squash = Math.max(0, (p.squash || 0) - dt * 4); if (p.vx) p.face = p.vx; }
+  // squash + mood decay
+  for (const p of S.ports) {
+    p.squash = Math.max(0, (p.squash || 0) - dt * 4); if (p.vx) p.face = p.vx;
+    if (p.mood && (p.mood.t -= dt) <= 0) p.mood = null;
+  }
+}
+
+// Short-lived facial reactions: relief after a dodge, a wince at a close call,
+// strain when shoved by a wall or a refused hop. Stronger moods are not
+// overwritten by weaker ones while they last.
+const MOOD_RANK = { relief: 0, strain: 1, wince: 2 };
+function setMood(p, kind, t) {
+  if (!p?.alive) return;
+  if (p.mood && MOOD_RANK[p.mood.kind] > MOOD_RANK[kind]) return;
+  p.mood = { kind, t };
 }
 
 // ---------- pause ----------
@@ -1065,69 +1084,123 @@ function drawBlocker() {
   ctx.restore();
 }
 
+// Line-art helper: fill, optional right-side shade band, ink outline.
+function inked(x, y, w, h, r, fill, shade, shadeFrac = 0.28) {
+  rr(x, y, w, h, r);
+  ctx.fillStyle = fill; ctx.fill();
+  if (shade) {
+    ctx.save(); ctx.clip();
+    ctx.fillStyle = shade; ctx.fillRect(x + w * (1 - shadeFrac), y, w * shadeFrac + 1, h);
+    ctx.restore();
+  }
+  ctx.strokeStyle = C.ink; ctx.lineWidth = 1.5; ctx.stroke();
+}
+
+// Printed caution sign (amber triangle, ink "!"), used for corpse-walls.
+function cautionSign(x, y, size) {
+  ctx.beginPath();
+  ctx.moveTo(x, y - size * 0.55); ctx.lineTo(x + size * 0.6, y + size * 0.45); ctx.lineTo(x - size * 0.6, y + size * 0.45);
+  ctx.closePath();
+  ctx.fillStyle = C.caution; ctx.fill();
+  ctx.strokeStyle = C.ink; ctx.lineWidth = 1.5; ctx.lineJoin = 'round'; ctx.stroke();
+  ctx.fillStyle = C.ink;
+  ctx.fillRect(x - 1, y - size * 0.22, 2, size * 0.36);
+  ctx.fillRect(x - 1, y + size * 0.22, 2, 2);
+}
+
+// The port's face lives in the socket cavity. Eyes are big on purpose:
+// at 66x26 they are the only way the port can emote.
+function drawPortFace(px, py, p, locking) {
+  const mood = p.mood?.kind || (locking ? 'scared' : 'calm');
+  const look = Math.max(-2, Math.min(2, (p.face || p.vx || 0) / 220));
+  const eyeY = py + 11, r = mood === 'scared' ? 6.4 : 6;
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  for (const side of [-1, 1]) {
+    const ex = px + side * 11;
+    if (mood === 'relief') {
+      // ^ ^ closed, pleased
+      ctx.strokeStyle = '#f3f1e6'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(ex, eyeY + 2.5, 4.2, Math.PI * 1.15, Math.PI * 1.85); ctx.stroke();
+      continue;
+    }
+    if (mood === 'wince') {
+      // > <  squeezed shut
+      ctx.strokeStyle = '#f3f1e6'; ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(ex - side * 4, eyeY - 4); ctx.lineTo(ex + side * 3, eyeY); ctx.lineTo(ex - side * 4, eyeY + 4);
+      ctx.stroke();
+      continue;
+    }
+    ctx.fillStyle = '#f3f1e6';
+    ctx.beginPath(); ctx.arc(ex, eyeY, r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = C.ink; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.fillStyle = C.ink;
+    ctx.beginPath(); ctx.arc(ex + look, eyeY + 0.5, mood === 'scared' ? 1.6 : 2.7, 0, Math.PI * 2); ctx.fill();
+    if (mood === 'strain') {
+      // heavy lids pressed halfway down, angled toward the middle
+      ctx.fillStyle = '#141412';
+      ctx.beginPath();
+      ctx.moveTo(ex - r - 1, eyeY - r - 1); ctx.lineTo(ex + r + 1, eyeY - r - 1);
+      ctx.lineTo(ex + r + 1, eyeY + (side > 0 ? -1 : 1)); ctx.lineTo(ex - r - 1, eyeY + (side > 0 ? 1 : -1));
+      ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = '#f3f1e6'; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(ex - r, eyeY + (side > 0 ? 1 : -1)); ctx.lineTo(ex + r, eyeY + (side > 0 ? -1 : 1)); ctx.stroke();
+    }
+  }
+  // mouth, tucked between the eyes above the contact tongue
+  ctx.strokeStyle = '#d9d5c9'; ctx.lineWidth = 1.3;
+  ctx.beginPath();
+  if (mood === 'relief') { ctx.moveTo(px - 3.5, py + 13); ctx.quadraticCurveTo(px, py + 17.5, px + 3.5, py + 13); }
+  else if (mood === 'wince') { ctx.moveTo(px - 3.5, py + 15); ctx.lineTo(px - 1.2, py + 13.5); ctx.lineTo(px + 1.2, py + 15); ctx.lineTo(px + 3.5, py + 13.5); }
+  else if (mood === 'strain') { ctx.moveTo(px - 3.5, py + 14.5); ctx.lineTo(px + 3.5, py + 14.5); }
+  else if (mood === 'scared') { ctx.arc(px, py + 14.5, 1.6, 0, Math.PI * 2); }
+  else { ctx.moveTo(px - 2.2, py + 14); ctx.quadraticCurveTo(px, py + 15.8, px + 2.2, py + 14); }
+  ctx.stroke();
+}
+
+// A plugged port: the plug is seated, its cable drops to the desk and becomes
+// a wall the surviving port cannot cross (see applyDeadWalls).
+function drawDeadPort(px, py, p) {
+  // cable first, so the plug body sits on top of it
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = C.ink; ctx.lineWidth = 11;
+  ctx.beginPath(); ctx.moveTo(px, py + p.h + 30);
+  ctx.bezierCurveTo(px + 8, py + p.h + 120, px - 10, H - 120, px - 2, H + 20); ctx.stroke();
+  ctx.strokeStyle = '#3a3833'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(px - 2, py + p.h + 32);
+  ctx.bezierCurveTo(px + 6, py + p.h + 120, px - 12, H - 120, px - 4, H + 20); ctx.stroke();
+  drawUSBPort(ctx, px, py, p.w, p.h, false);
+  // the plug's steel fills the cavity: nobody home
+  inked(px - p.w / 2 + 4, py + 4.5, p.w - 8, p.h - 8, 2, '#c9ccc5', '#a2a69f', 0.28);
+  ctx.fillStyle = C.ink;
+  ctx.fillRect(px - p.w * 0.25, py + 9, p.w * 0.14, 6); ctx.fillRect(px + p.w * 0.11, py + 9, p.w * 0.14, 6);
+  // plug body hanging under the socket, signal shoulder on top
+  inked(px - 23, py + p.h + 1, 46, 30, [2, 2, 7, 7], '#35342f', '#272622', 0.25);
+  ctx.fillStyle = C.signal; ctx.fillRect(px - 22.25, py + p.h + 1.75, 44.5, 4.5);
+  cautionSign(px, py - 15, 15);
+}
+
 function drawPorts() {
   for (const p of S.ports) {
     const px = p.alive ? p.x : (p.stuckX ?? p.x);
     const py = EDGE_Y - 22;
+    if (!p.alive) { ctx.save(); drawDeadPort(px, py, p); ctx.restore(); continue; }
     const sq = p.squash || 0;
     const wob = 1 + sq * 0.12, hob = 1 - sq * 0.08;
-    // phase-out blink while invulnerable
     ctx.save();
-    if (p.alive && S.invuln > 0 && Math.floor(S.invuln * 12) % 2 === 0) ctx.globalAlpha = 0.35;
+    // phase-out blink while invulnerable
+    if (S.invuln > 0 && Math.floor(S.invuln * 12) % 2 === 0) ctx.globalAlpha = 0.35;
     // FLIP-FLOP extra life: the whole port hangs upside-down (tongue on top,
     // face derpy) until it absorbs a plug
-    const flipped = p.alive && S.flipLife;
+    const flipped = S.flipLife;
     ctx.translate(px, py + p.h / 2);
     ctx.scale(wob, hob);
     if (flipped) ctx.rotate(Math.PI);
     ctx.translate(-px, -(py + p.h / 2));
-    if (!p.alive) {
-      // plugged: dead socket + stuck plug stub + cable.
-      // The hanging cable is a WALL — survivors can't cross it (see applyDeadWalls),
-      // so mark it with hazard chevrons on the laptop edge.
-      drawUSBPort(ctx, px, py, p.w, p.h, false);
-      ctx.fillStyle = '#c7c3b8'; ctx.fillRect(px - 20, py - 2, 40, 10); // stuck shell
-      ctx.fillStyle = C.signal; ctx.fillRect(px - 20, py + 8, 40, 12);
-      ctx.strokeStyle = C.signal; ctx.lineWidth = 4;
-      ctx.beginPath(); ctx.moveTo(px - 28, py - 12); ctx.lineTo(px + 28, py + p.h + 8);
-      ctx.moveTo(px + 28, py - 12); ctx.lineTo(px - 28, py + p.h + 8); ctx.stroke();
-      ctx.fillStyle = C.ink; ctx.fillRect(px - 6, py + p.h, 12, 44); // cable down = the wall
-      ctx.fillStyle = C.caution; // hazard chevrons on the edge
-      for (const cx of [px - 30, px - 10, px + 10]) {
-        ctx.beginPath();
-        ctx.moveTo(cx, EDGE_Y + 4); ctx.lineTo(cx + 10, EDGE_Y + 4);
-        ctx.lineTo(cx + 6, EDGE_Y + 9); ctx.lineTo(cx - 4, EDGE_Y + 9);
-        ctx.closePath(); ctx.fill();
-      }
-      ctx.restore();
-      continue;
-    }
     drawUSBPort(ctx, px, py, p.w, p.h);
-    const locking = S.enemies.some(E => E.state === 'lock');
-    // Fixed eye sockets, directional pupils: curious at rest, wide-eyed at lock.
-    const look = Math.max(-1.8, Math.min(1.8, (p.face || p.vx || 0) / 240));
-    const eyeY = py + 10, radius = locking ? 5.2 : 4.8;
-    for (const eyeX of [px - 9, px + 9]) {
-      ctx.fillStyle = '#030c07';
-      ctx.beginPath(); ctx.arc(eyeX, eyeY + .7, radius + .8, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#f3f1e6';
-      ctx.beginPath(); ctx.arc(eyeX, eyeY, radius, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#1a1916';
-      ctx.beginPath(); ctx.arc(eyeX + look, eyeY + .4, locking ? 1.7 : 2.5, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath(); ctx.arc(eyeX + look - .6, eyeY - .5, .8, 0, Math.PI * 2); ctx.fill();
-    }
-    // A small expression sits above the contacts without obscuring the hardware.
-    ctx.strokeStyle = '#a9b3a8'; ctx.lineWidth = 1.2; ctx.lineCap = 'round';
-    ctx.beginPath();
-    if (locking) {
-      ctx.moveTo(px - 2, py + 15); ctx.quadraticCurveTo(px, py + 13, px + 2, py + 15);
-    } else {
-      ctx.moveTo(px - 2, py + 14); ctx.quadraticCurveTo(px, py + 16, px + 2, py + 14);
-    }
-    ctx.stroke();
-    // "YOU" tag stays upright even when the port hangs upside-down
+    drawPortFace(px, py, p, S.enemies.some(E => E.state === 'lock'));
     ctx.restore();
+    // "YOU" tag stays upright even when the port hangs upside-down
     ctx.fillStyle = '#e4dfd2'; ctx.font = mono(10, 600); ctx.textAlign = 'center';
     ctx.fillText(flipped ? 'YOU (FLIPPED)' : 'YOU', px, py - 9);
   }
@@ -1139,56 +1212,81 @@ function drawEnemy(E) {
   const plugW = ep.plugW;
   const tipX = E.x, tipY = E.tipY;
   const urgency = E.state === 'lock' ? (1 - E.t / ep.lockTime) : 0;
-
-  ctx.save();
-  // cable (thick, from bottom of screen up into the fist)
-  const handY = tipY + 44;
-  ctx.strokeStyle = '#141311'; ctx.lineWidth = 22; ctx.lineCap = 'round';
-  ctx.beginPath(); ctx.moveTo(tipX + 46, H + 20); ctx.quadraticCurveTo(tipX + 40, handY + 190, tipX + 6, handY + 110); ctx.stroke();
-  ctx.strokeStyle = '#34322d'; ctx.lineWidth = 6;
-  ctx.beginPath(); ctx.moveTo(tipX + 46, H + 20); ctx.quadraticCurveTo(tipX + 40, handY + 190, tipX + 6, handY + 110); ctx.stroke();
-
   const trem = E.state === 'lock' && !motionPreference.matches ? Math.sin(performance.now() / 30) * (2 + urgency * 4) : 0;
   const hx = tipX + trem;
+  const handY = tipY + 44;
+  const hot = E.state === 'strike' || E.state === 'impact';
+  const skin = hot ? '#e8bb92' : '#dfae86', skinShade = hot ? '#cf9a70' : '#c38f66';
 
-  // --- hand (big threatening mitt gripping the plug; sleeve exits frame bottom) ---
-  ctx.fillStyle = '#c99e78'; // wrist
-  ctx.fillRect(hx - 62, handY + 78, 124, 60);
-  ctx.fillStyle = E.sleeve; ctx.fillRect(hx - 62, handY + 118, 124, 60);
-  ctx.fillStyle = 'rgba(0,0,0,.18)'; ctx.fillRect(hx - 62, handY + 118, 124, 5); // cuff seam
-  const skin = E.state === 'strike' || E.state === 'impact' ? '#e6b68a' : '#dca67a';
-  const fist = (fw, fh) => { rr(hx - fw/2, handY, fw, fh, 26); ctx.fill(); };
-  ctx.fillStyle = skin;
-  fist(124, 96); // palm
-  // fingers wrapped around plug
-  rr(hx - 66, handY + 6, 26, 70, 12); ctx.fill();
-  rr(hx + 40, handY + 6, 26, 70, 12); ctx.fill();
-  // thumb
-  ctx.save(); ctx.translate(hx - 52, handY + 30); ctx.rotate(-0.5);
-  rr(-14, -34, 30, 66, 14); ctx.fill(); ctx.restore();
-  // knuckle shading + finger grooves
-  ctx.fillStyle = 'rgba(120,70,40,.3)';
-  for (let i = -1; i <= 1; i++) { ctx.beginPath(); ctx.arc(hx + i * 30, handY + 18, 5, 0, Math.PI * 2); ctx.fill(); }
-  ctx.strokeStyle = 'rgba(120,70,40,.45)'; ctx.lineWidth = 3;
-  for (const gx of [hx - 15, hx + 15]) {
-    ctx.beginPath(); ctx.moveTo(gx, handY + 34); ctx.lineTo(gx, handY + 88); ctx.stroke();
+  ctx.save();
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  // cable leaves the bottom of the fist and drops off-frame beside the arm
+  ctx.strokeStyle = C.ink; ctx.lineWidth = 13;
+  ctx.beginPath(); ctx.moveTo(hx + 30, handY + 84); ctx.bezierCurveTo(hx + 52, handY + 120, hx + 70, handY + 150, hx + 80, H + 30); ctx.stroke();
+  ctx.strokeStyle = '#3a3833'; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(hx + 28, handY + 86); ctx.bezierCurveTo(hx + 50, handY + 122, hx + 68, handY + 152, hx + 78, H + 30); ctx.stroke();
+
+  // forearm, tapering into the sleeve
+  ctx.beginPath();
+  ctx.moveTo(hx - 42, handY + 70); ctx.lineTo(hx + 42, handY + 70);
+  ctx.lineTo(hx + 50, handY + 140); ctx.lineTo(hx - 50, handY + 140); ctx.closePath();
+  ctx.fillStyle = skin; ctx.fill();
+  ctx.save(); ctx.clip(); ctx.fillStyle = skinShade; ctx.fillRect(hx + 16, handY + 60, 40, 90); ctx.restore();
+  ctx.strokeStyle = C.ink; ctx.lineWidth = 1.5; ctx.stroke();
+  // jabbers wear a smartwatch, naturally
+  if (ep.plug === 'c') {
+    inked(hx - 46, handY + 98, 92, 11, 2, '#23221f');
+    inked(hx - 13, handY + 95, 26, 17, 4, '#2f2e2a');
+    ctx.fillStyle = C.caution; ctx.fillRect(hx - 8, handY + 100, 16, 7);
+  }
+  // sleeve with a cuff and two fold lines; bruisers roll theirs up
+  inked(hx - 62, handY + 120, 124, H - handY - 90, [8, 8, 0, 0], E.sleeve, 'rgba(0,0,0,.2)', 0.3);
+  if (ep.plug === 'a') inked(hx - 64, handY + 116, 128, 16, 6, E.sleeve, 'rgba(0,0,0,.2)', 0.3);
+  ctx.strokeStyle = 'rgba(26,25,22,.55)'; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(hx - 34, handY + 146); ctx.quadraticCurveTo(hx - 26, handY + 156, hx - 30, handY + 170);
+  ctx.moveTo(hx + 22, handY + 144); ctx.quadraticCurveTo(hx + 30, handY + 154, hx + 26, handY + 168);
+  ctx.stroke();
+  if (ep.plug) {
+    ctx.fillStyle = 'rgba(236,232,223,.75)'; ctx.font = mono(11, 600); ctx.textAlign = 'center';
+    ctx.fillText(ep.plug === 'c' ? 'USB-C' : 'USB-A', hx, handY + 152);
   }
 
-  // --- USB-A plug pointing UP at the laptop ---
-  const py = tipY;
+  // back of the hand, behind the plug
+  inked(hx - 56, handY + 14, 112, 82, 26, skin, skinShade, 0.22);
+
   // speed lines on strike (at the sides so the fist stays readable)
   if (E.state === 'strike') {
     ctx.strokeStyle = 'rgba(26,25,22,.4)'; ctx.lineWidth = 2;
-    for (const sx of [hx - plugW / 2 - 22, hx + plugW / 2 + 22]) {
-      ctx.beginPath(); ctx.moveTo(sx, py + 184); ctx.lineTo(sx, py + 104); ctx.stroke();
+    for (const sx of [hx - plugW / 2 - 26, hx + plugW / 2 + 26]) {
+      ctx.beginPath(); ctx.moveTo(sx, tipY + 70); ctx.lineTo(sx, tipY - 6); ctx.stroke();
     }
   }
-  (ep.plug === 'c' ? drawUSBCStick : drawUSBStick)(ctx, hx, py, plugW, E.accent);
-  // personality hands print their plug type on the cuff
-  if (ep.plug) {
-    ctx.fillStyle = 'rgba(236,232,223,.7)'; ctx.font = mono(11, 600); ctx.textAlign = 'center';
-    ctx.fillText(ep.plug === 'c' ? 'USB-C' : 'USB-A', hx, handY + 142);
+  (ep.plug === 'c' ? drawUSBCStick : drawUSBStick)(ctx, hx, tipY, plugW, E.accent);
+
+  // Fingers wrap across the plug body, so from the front they read as four
+  // stacked bands (index on top, pinky at the bottom) with knuckles on the right.
+  const fingers = [[26, 104], [42, 106], [58, 100], [73, 88]];
+  for (const [fy, fw] of fingers) {
+    const fx = hx - 52, fh = 17;
+    rr(fx, handY + fy, fw, fh, 8.5);
+    ctx.fillStyle = skin; ctx.fill();
+    ctx.save(); ctx.clip();
+    ctx.fillStyle = skinShade; ctx.fillRect(fx, handY + fy + fh * 0.62, fw, fh);
+    ctx.restore();
+    ctx.strokeStyle = C.ink; ctx.lineWidth = 1.5; ctx.stroke();
+    // middle-joint crease near the knuckle end
+    ctx.strokeStyle = 'rgba(26,25,22,.4)'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(fx + fw - 22, handY + fy + 4); ctx.quadraticCurveTo(fx + fw - 19, handY + fy + fh / 2, fx + fw - 22, handY + fy + fh - 4); ctx.stroke();
   }
+  // thumb runs up the near side and presses on the plug body, nail at the top
+  ctx.save();
+  ctx.translate(hx - 46, handY + 44); ctx.rotate(0.12);
+  inked(-12, -34, 24, 62, 12, skin, skinShade, 0.3);
+  inked(-7, -30, 14, 12, [6, 6, 3, 3], '#efcfb2');
+  ctx.strokeStyle = 'rgba(26,25,22,.4)'; ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.moveTo(-7, -6); ctx.quadraticCurveTo(0, -3, 7, -6); ctx.stroke();
+  ctx.restore();
 
   // tracking: a dashed ring says "it's looking for you", without claiming a target yet
   if (E.state === 'track') {
