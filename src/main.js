@@ -164,7 +164,8 @@ function setupRound(c) {
   S.enemies = (c.hands || [{}]).map((h, i) => {
     const E = createEnemy(480 + (i === 0 ? 0 : (i % 2 ? 150 : -150)), h.startDelay ?? e.startDelay);
     E.ep = handParams(e, h);
-    E.sleeve = i === 0 ? '#34405a' : '#6b3b2c'; // second human wears a rust sleeve
+    // industrial yellow for the lead arm, steel blue for extras, clean-room grey for jabbers
+    E.paint = E.ep.plug === 'c' ? '#d6d3ca' : i === 0 ? '#e2a72e' : '#8796ab';
     E.accent = E.ep.plug === 'c' ? C.caution : C.signal; // jabbers carry an amber plug
     E.tipY = restTipY();
     return E;
@@ -210,9 +211,9 @@ function showMenu() {
   const best = loadBest();
   show(`<div class="card menu-card flash">
     <h1>Stay<br> unplugged.</h1>
-    <p class="lede">You are a USB port. Somebody wants to plug something into you. Be somewhere else.</p>
+    <p class="lede">You are a USB port. A machine wants to plug something into you. Be somewhere else.</p>
     <ol class="steps">
-      <li><span>1</span><div><b>Watch the hand.</b> It drifts toward you.</div></li>
+      <li><span>1</span><div><b>Watch the arm.</b> It drifts toward you.</div></li>
       <li><span>2</span><div><b>Red means locked.</b> The strike lands exactly there.</div></li>
       <li><span>3</span><div><b>Move.</b> A and D, arrow keys, or drag.</div></li>
     </ol>
@@ -229,18 +230,18 @@ function briefRows(c) {
     slots: 'Hop between slots with 1 to 5, the arrow keys, or a tap. Hops fail once the strike is moving, so commit while the target is red.',
     duo: 'Both ports move together. A plugged port leaves its cable behind, and the other cannot cross it.',
   }[c.movement]]);
-  rows.push(['To clear', c.timeOnly ? `Survive ${c.time} seconds.` : `Survive ${c.time} seconds, or make the hand miss ${c.missesToWin} times.`]);
+  rows.push(['To clear', c.timeOnly ? `Survive ${c.time} seconds.` : `Survive ${c.time} seconds, or make the arm miss ${c.missesToWin} times.`]);
   const hands = (c.hands || [{}]);
-  if (hands.length > 1) rows.push(['Opponents', `${hands.length} hands, each chasing whichever port is closest.`]);
+  if (hands.length > 1) rows.push(['Opponents', `${hands.length} arms, each chasing whichever port is closest.`]);
   const plugs = new Set(hands.map(h => h.plug).filter(Boolean));
-  if (plugs.has('a')) rows.push(['USB-A', 'The bruiser. Full-width plug and a long wind-up, one strike at a time.']);
-  if (plugs.has('c')) rows.push(['USB-C', 'The jabber. Amber, narrow and quick: a short warning, a tight ring, and it often strikes twice.', 'warn']);
-  if (hands.some(h => ((h.blackout ?? c.enemy.blackout) || 0) > 0)) rows.push(['Blackout', 'The crosshair sometimes cuts out. Read where the fist is drifting.', 'warn']);
+  if (plugs.has('a')) rows.push(['USB-A', 'The bruiser. Heavy yellow clamp, full-width plug, a long wind-up and one strike at a time.']);
+  if (plugs.has('c')) rows.push(['USB-C', 'The jabber. Slim grey arm, narrow plug: a short warning, a tight ring, and it often strikes twice.', 'warn']);
+  if (hands.some(h => ((h.blackout ?? c.enemy.blackout) || 0) > 0)) rows.push(['Blackout', 'The crosshair sometimes cuts out. Read where the arm is drifting.', 'warn']);
   if (c.blocker) rows.push(c.blocker.kind === 'slot'
     ? ['Seized slot', 'One slot at a time gets taken. Leave when it flashes or you will be ejected.', 'warn']
     : ['Barricades', `Sections of ${Math.round(c.blocker.frac * 100)}% get taped off. Leave when the outline flashes.`, 'warn']);
   if (c.startSeals) rows.push(['Sealed', `${c.startSeals} slots start blocked, leaving ${c.slots.length - c.startSeals}.`, 'warn']);
-  if (c.enemy.ramp) rows.push(['Speed', 'The hand gets a little faster after every strike.', 'warn']);
+  if (c.enemy.ramp) rows.push(['Speed', 'The arm gets a little faster after every strike.', 'warn']);
   if (c.quiz) rows.push(['Pop quiz', 'Time freezes and the plug creeps closer. Answer to unfreeze it. A wrong answer means an instant strike.', 'warn']);
   if (c.sealTide) rows.push(['Seal tide', 'The ends of the edge get sealed over time. Every third close call wins a section back.', 'warn']);
   if (S.flipLife) rows.push(['Spare life', 'Flip-flop. Your ports hang upside down and the first plug to land is absorbed.', 'good']);
@@ -268,7 +269,7 @@ function showEnd(win) {
   const title = win ? (last ? 'Still unplugged.' : 'Dodged.') : 'Plugged in.';
   const sub = win
     ? (last ? `${LEVELS.length} levels and not one connection. Someone is filing a bug report.` : `Connection refused.${c.id === 3 ? ' You earned a <b>flip-flop</b>: the next plug that lands is absorbed.' : ''}`)
-    : 'The human got their connection. Make them work harder next time.';
+    : 'The machine got its connection. Make it work harder next time.';
   show(`<div class="card flash">
     ${head(`Level ${pad2(c.id)} of ${pad2(LEVELS.length)}`, win ? '<span class="ok">Cleared</span>' : '<span class="bad">Port lost</span>')}
     <h2>${title}</h2>
@@ -325,7 +326,7 @@ function showEndlessIntro() {
   show(`<div class="card flash">
     ${head('Endless mode', best > 0 ? `Best ${best.toLocaleString()}` : 'No best yet')}
     <h2>How long can you last?</h2>
-    <p class="lede">All eight levels on repeat. Each round the hands get faster, the warnings get shorter, and more of them show up.</p>
+    <p class="lede">All eight levels on repeat. Each round the arms get faster, the warnings get shorter, and more of them show up.</p>
     ${spec([
       ['Scoring', `Miss +${SCORE.MISS}. Close call +${SCORE.NEAR}. Round clear 500 and up.`],
       ['To advance', 'Survive the 25 second timer. Dodges only add to your score.'],
@@ -866,7 +867,7 @@ function togglePause() {
     show(`<div class="card">
       ${head('Paused', S.mode === 'endless' ? `Round ${S.round}` : `Level ${pad2(c.id)} of ${pad2(LEVELS.length)}`)}
       <h2>Take a breath.</h2>
-      <p class="lede">The human can wait.</p>
+      <p class="lede">The machine can wait.</p>
       ${spec([
         ['Slide', 'A and D, the arrow keys, or drag.'],
         ['Slots', 'Press 1 to 5, or tap a slot.'],
@@ -981,7 +982,7 @@ function drawMenuFigure() {
     ctx.fillStyle = C.ink; ctx.font = condensed(700, 19); ctx.fillText(word, x1 + 8, y + 14);
   };
   callout(834, 862, 200, 'A', 'You');
-  callout(797, 872, 356, 'B', 'Human');
+  callout(797, 872, 356, 'B', 'Machine');
   ctx.fillStyle = C.ink3; ctx.font = mono(11); ctx.textAlign = 'right';
   ctx.fillText('FIG. 1', W - 20, H - 18);
 }
@@ -1206,124 +1207,98 @@ function drawPorts() {
   }
 }
 
+// The attacker is an industrial arm: two jaws clamp the plug body, a carriage
+// and wrist sit under it, and the arm runs off-frame from a pivot joint.
+// Bruisers are heavy yellow clamps; jabbers are slim grey pick-and-place units.
+const ARM = {
+  a: { jaw: 15, arm: 38, bolts: true },
+  c: { jaw: 7, arm: 24, bolts: false },
+  base: { jaw: 11, arm: 30, bolts: true },
+};
+
+function bolt(x, y, r = 2.6) {
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fillStyle = '#8f8b80'; ctx.fill();
+  ctx.strokeStyle = C.ink; ctx.lineWidth = 1; ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x - r * 0.6, y); ctx.lineTo(x + r * 0.6, y); ctx.stroke();
+}
+
 function drawEnemy(E) {
   const c = cfg();
   const ep = E.ep || c.enemy;
   const plugW = ep.plugW;
   const tipX = E.x, tipY = E.tipY;
   const urgency = E.state === 'lock' ? (1 - E.t / ep.lockTime) : 0;
-  const trem = E.state === 'lock' && !motionPreference.matches ? Math.sin(performance.now() / 30) * (2 + urgency * 4) : 0;
+  // servo jitter while locked: the arm strains against its own brakes
+  const trem = E.state === 'lock' && !motionPreference.matches ? Math.sin(performance.now() / 30) * (1.5 + urgency * 3.5) : 0;
   const hx = tipX + trem;
-  const handY = tipY + 44;
-  const hot = E.state === 'strike' || E.state === 'impact';
-  const skin = hot ? '#e8bb92' : '#dfae86', skinShade = hot ? '#cf9a70' : '#c38f66';
+  const kit = ARM[ep.plug] || ARM.base;
+  const paint = E.paint, shade = 'rgba(0,0,0,.18)';
+  const isC = ep.plug === 'c';
+  // plug body extents (from usb-art), so the jaws close exactly on it
+  const bodyTop = tipY + (isC ? 46 : 58), bodyBot = tipY + (isC ? 110 : 114);
+  const bodyHalf = plugW / 2 + (isC ? 4 : 5);
+  const carriageY = bodyBot - 6, wristY = carriageY + 16, pivotY = wristY + 36;
 
   ctx.save();
   ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-  // cable leaves the bottom of the fist and drops off-frame beside the arm
-  ctx.strokeStyle = C.ink; ctx.lineWidth = 13;
-  ctx.beginPath(); ctx.moveTo(hx + 30, handY + 84); ctx.bezierCurveTo(hx + 52, handY + 120, hx + 70, handY + 150, hx + 80, H + 30); ctx.stroke();
-  ctx.strokeStyle = '#3a3833'; ctx.lineWidth = 4;
-  ctx.beginPath(); ctx.moveTo(hx + 28, handY + 86); ctx.bezierCurveTo(hx + 50, handY + 122, hx + 68, handY + 152, hx + 78, H + 30); ctx.stroke();
+  // the plug's own cable, fed out the side of the carriage and off-frame
+  ctx.strokeStyle = C.ink; ctx.lineWidth = 10;
+  ctx.beginPath(); ctx.moveTo(hx + 6, carriageY + 10); ctx.bezierCurveTo(hx + 50, carriageY + 24, hx + 62, pivotY + 40, hx + 74, H + 30); ctx.stroke();
+  ctx.strokeStyle = '#3a3833'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(hx + 6, carriageY + 10); ctx.bezierCurveTo(hx + 50, carriageY + 24, hx + 62, pivotY + 40, hx + 74, H + 30); ctx.stroke();
 
-  // forearm, tapering into the sleeve
-  ctx.beginPath();
-  ctx.moveTo(hx - 42, handY + 70); ctx.lineTo(hx + 42, handY + 70);
-  ctx.lineTo(hx + 50, handY + 140); ctx.lineTo(hx - 50, handY + 140); ctx.closePath();
-  ctx.fillStyle = skin; ctx.fill();
-  ctx.save(); ctx.clip(); ctx.fillStyle = skinShade; ctx.fillRect(hx + 16, handY + 60, 40, 90); ctx.restore();
-  ctx.strokeStyle = C.ink; ctx.lineWidth = 1.5; ctx.stroke();
-  // jabbers wear a smartwatch, naturally
-  if (ep.plug === 'c') {
-    inked(hx - 46, handY + 98, 92, 11, 2, '#23221f');
-    inked(hx - 13, handY + 95, 26, 17, 4, '#2f2e2a');
-    ctx.fillStyle = C.caution; ctx.fillRect(hx - 8, handY + 100, 16, 7);
+  // arm segment, with a hydraulic ram alongside and the plug type stencilled on
+  const aw = kit.arm;
+  inked(hx - aw / 2, pivotY, aw, H + 30 - pivotY, 6, paint, shade, 0.3);
+  if (!isC) {
+    inked(hx - aw / 2 - 12, pivotY + 18, 8, H + 30 - pivotY, 3, '#bcbab2', '#9a978e', 0.4);
+    inked(hx - aw / 2 - 13, pivotY + 60, 10, H + 30 - pivotY, 2, '#55524b');
   }
-  // sleeve with a cuff and two fold lines; bruisers roll theirs up
-  inked(hx - 62, handY + 120, 124, H - handY - 90, [8, 8, 0, 0], E.sleeve, 'rgba(0,0,0,.2)', 0.3);
-  if (ep.plug === 'a') inked(hx - 64, handY + 116, 128, 16, 6, E.sleeve, 'rgba(0,0,0,.2)', 0.3);
-  ctx.strokeStyle = 'rgba(26,25,22,.55)'; ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.moveTo(hx - 34, handY + 146); ctx.quadraticCurveTo(hx - 26, handY + 156, hx - 30, handY + 170);
-  ctx.moveTo(hx + 22, handY + 144); ctx.quadraticCurveTo(hx + 30, handY + 154, hx + 26, handY + 168);
-  ctx.stroke();
   if (ep.plug) {
-    ctx.fillStyle = 'rgba(236,232,223,.75)'; ctx.font = mono(11, 600); ctx.textAlign = 'center';
-    ctx.fillText(ep.plug === 'c' ? 'USB-C' : 'USB-A', hx, handY + 152);
+    ctx.fillStyle = 'rgba(26,25,22,.75)'; ctx.font = mono(10, 600); ctx.textAlign = 'center';
+    ctx.save(); ctx.translate(hx + 1, pivotY + 58); ctx.rotate(-Math.PI / 2);
+    ctx.fillText(isC ? 'USB-C' : 'USB-A', 0, 3.5);
+    ctx.restore();
+  }
+  // pivot joint
+  ctx.beginPath(); ctx.arc(hx, pivotY, aw / 2 + 4, 0, Math.PI * 2);
+  ctx.fillStyle = paint; ctx.fill(); ctx.strokeStyle = C.ink; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.beginPath(); ctx.arc(hx, pivotY, aw / 4, 0, Math.PI * 2);
+  ctx.fillStyle = '#35342f'; ctx.fill(); ctx.stroke();
+  bolt(hx, pivotY, 2.4);
+
+  // wrist block, narrower than the carriage
+  inked(hx - 20, wristY - 2, 40, pivotY - wristY + 2, 4, '#35342f', '#272622', 0.3);
+  if (isC) { // jabbers carry a status light
+    ctx.beginPath(); ctx.arc(hx + 11, wristY + 9, 2.6, 0, Math.PI * 2);
+    ctx.fillStyle = C.caution; ctx.fill(); ctx.strokeStyle = C.ink; ctx.lineWidth = 1; ctx.stroke();
   }
 
-  // speed lines on strike (at the sides so the fist stays readable)
+  // speed lines on strike (at the sides so the gripper stays readable)
   if (E.state === 'strike') {
     ctx.strokeStyle = 'rgba(26,25,22,.4)'; ctx.lineWidth = 2;
-    for (const sx of [hx - plugW / 2 - 26, hx + plugW / 2 + 26]) {
+    for (const sx of [hx - bodyHalf - kit.jaw - 18, hx + bodyHalf + kit.jaw + 18]) {
       ctx.beginPath(); ctx.moveTo(sx, tipY + 70); ctx.lineTo(sx, tipY - 6); ctx.stroke();
     }
   }
-  (ep.plug === 'c' ? drawUSBCStick : drawUSBStick)(ctx, hx, tipY, plugW, E.accent);
+  (isC ? drawUSBCStick : drawUSBStick)(ctx, hx, tipY, plugW, E.accent);
 
-  // The fist is one silhouette, not four outlined fingers: knuckle bumps step
-  // down the outer edge toward the pinky, and short creases only hint at the
-  // finger divisions. Outlining each finger is what made them read as sausages.
-  const L = hx - 54, T = handY + 24, B = handY + 90, R = hx + 46, seg = (B - T) / 4;
-  const knuckle = (i) => R - i * 4; // each finger a little shorter than the last
-  ctx.beginPath();
-  ctx.moveTo(L + 16, T);
-  ctx.lineTo(knuckle(0) - 10, T);
-  for (let i = 0; i < 4; i++) {
-    const y0 = T + i * seg, y1 = y0 + seg, kx = knuckle(i);
-    ctx.bezierCurveTo(kx + 6, y0 + 1, kx + 9 - i, y1 - 2, kx - (i === 3 ? 12 : 3), y1);
+  // carriage: the rail both jaws ride on
+  const reach = bodyHalf + kit.jaw + 4;
+  inked(hx - reach, carriageY, reach * 2, 16, 3, paint, shade, 0.3);
+  ctx.strokeStyle = 'rgba(26,25,22,.45)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(hx - reach + 5, carriageY + 8); ctx.lineTo(hx + reach - 5, carriageY + 8); ctx.stroke();
+  // jaws, closed on the plug body, with grip pads on their inner faces
+  const jawTop = bodyTop + 6;
+  for (const side of [-1, 1]) {
+    const inner = hx + side * bodyHalf;
+    const x = side < 0 ? inner - kit.jaw : inner;
+    inked(x, jawTop, kit.jaw, carriageY - jawTop + 4, [3, 3, 1, 1], paint, shade, 0.3);
+    ctx.fillStyle = C.ink;
+    for (let y = jawTop + 6; y < carriageY - 4; y += 6) ctx.fillRect(side < 0 ? inner - 3 : inner, y, 3, 2);
+    if (kit.bolts) { bolt(x + kit.jaw / 2 + side, jawTop + 9); bolt(x + kit.jaw / 2 + side, carriageY - 6); }
   }
-  ctx.lineTo(L + 18, B);
-  ctx.quadraticCurveTo(L, B, L, B - 18);
-  ctx.lineTo(L, T + 16);
-  ctx.quadraticCurveTo(L, T, L + 16, T);
-  ctx.closePath();
-  ctx.fillStyle = skin; ctx.fill();
-  ctx.save(); ctx.clip();
-  ctx.fillStyle = skinShade; ctx.fillRect(L, B - 13, R - L + 20, 20);
-  ctx.restore();
-  ctx.strokeStyle = C.ink; ctx.lineWidth = 1.5; ctx.stroke();
-  // finger creases: start at each joint on the knuckle edge, fade out part-way in
-  ctx.strokeStyle = 'rgba(26,25,22,.45)'; ctx.lineWidth = 1.3;
-  for (let i = 0; i < 3; i++) {
-    const y = T + (i + 1) * seg, kx = knuckle(i) - 3;
-    ctx.beginPath(); ctx.moveTo(kx, y); ctx.quadraticCurveTo(kx - 18, y + 2, kx - 40 + i * 4, y + 1); ctx.stroke();
-  }
-  // middle-joint fold, one soft line down the knuckle side
-  ctx.strokeStyle = 'rgba(26,25,22,.25)';
-  ctx.beginPath(); ctx.moveTo(R - 16, T + 6); ctx.quadraticCurveTo(R - 20, (T + B) / 2, R - 26, B - 8); ctx.stroke();
-  // The thumb grows out of the fist: wide at the base, tapering to the tip on
-  // the plug. Only its outer edge and tip are inked; the inner edge is a crease
-  // that fades out where it joins the hand, so it reads as attached.
-  const thumbTop = handY + 5;
-  const base = [L + 2, B - 14], outerTop = [L - 3, T + 2], tipL = [L + 5, thumbTop + 6], tipR = [L + 21, thumbTop + 7];
-  const inner = [L + 24, T + 18], seam = [L + 18, B - 22];
-  const thumbPath = () => {
-    ctx.beginPath();
-    ctx.moveTo(...base);
-    ctx.bezierCurveTo(L - 4, B - 38, L - 5, T + 18, ...outerTop);
-    ctx.bezierCurveTo(L - 2, T - 8, L - 1, thumbTop + 12, ...tipL);
-    ctx.bezierCurveTo(L + 8, thumbTop - 1, L + 19, thumbTop - 1, ...tipR);
-    ctx.bezierCurveTo(L + 24, thumbTop + 12, L + 25, T + 6, ...inner);
-  };
-  thumbPath();
-  ctx.quadraticCurveTo(L + 23, B - 34, ...seam);
-  ctx.closePath();
-  ctx.fillStyle = skin; ctx.fill();
-  // a sliver of shade under the thumb's inner edge gives it some depth
-  ctx.save(); ctx.clip();
-  ctx.fillStyle = skinShade; ctx.fillRect(L + 17, T - 4, 10, B - T);
-  ctx.restore();
-  thumbPath();
-  ctx.strokeStyle = C.ink; ctx.lineWidth = 1.5; ctx.stroke();
-  ctx.strokeStyle = 'rgba(26,25,22,.35)'; ctx.lineWidth = 1.3;
-  ctx.beginPath(); ctx.moveTo(...inner); ctx.quadraticCurveTo(L + 23, B - 34, ...seam); ctx.stroke();
-  // nail, and the knuckle fold below it
-  rr(L + 7, thumbTop + 3, 11, 10, [5, 5, 3, 3]);
-  ctx.fillStyle = '#efcfb2'; ctx.fill();
-  ctx.strokeStyle = 'rgba(26,25,22,.55)'; ctx.lineWidth = 1.2; ctx.stroke();
-  ctx.strokeStyle = 'rgba(26,25,22,.3)';
-  ctx.beginPath(); ctx.moveTo(L + 2, T + 6); ctx.quadraticCurveTo(L + 10, T + 9, L + 19, T + 6); ctx.stroke();
 
   // tracking: a dashed ring says "it's looking for you", without claiming a target yet
   if (E.state === 'track') {

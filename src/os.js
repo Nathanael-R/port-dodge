@@ -22,21 +22,21 @@ export const OS_COPY = {
   mac: {
     brand: 'MacLap Pro',
     sub: 'USB-C only · dongles sold separately',
-    foot: 'Mac detected. The hand bills by the hour, plus dongle fees.',
+    foot: 'Mac detected. The arm bills by the hour, plus dongle fees.',
     edge: ['#e8edff', '#9aa5c4'],
     dot: true, // traffic lights on the lid
   },
   windows: {
     brand: 'WinLap 11',
     sub: 'have you tried turning it off and on again',
-    foot: 'Windows detected. The hand will restart after updates. Twice.',
+    foot: 'Windows detected. The arm will restart after updates. Twice.',
     edge: ['#4cc2ff', '#9beaff'],
     dot: false,
   },
   linux: {
     brand: '$ penglap --btw',
     sub: 'i use arch btw · sudo dodge',
-    foot: 'Linux detected. The hand compiled itself from source.',
+    foot: 'Linux detected. The arm compiled its own firmware from source.',
     edge: ['#7bff9e', '#4cc2ff'],
     dot: false,
   },

@@ -2,7 +2,7 @@
 // movement: 'free' | 'slots' | 'duo' (duo = 2 ports, shared command)
 export const LEVELS = [
   {
-    id: 1, name: 'FIRST BOOT', sub: 'One slow hand and long warnings. Learn the rhythm.',
+    id: 1, name: 'FIRST BOOT', sub: 'One slow arm and long warnings. Learn the rhythm.',
     movement: 'free',
     time: 30, missesToWin: 5,
     rail: { min: 90, max: 870 },
@@ -35,7 +35,7 @@ export const LEVELS = [
     slots: [160, 320, 480, 640, 800],
   },
   {
-    id: 4, name: 'TWO HANDS', sub: 'Two ports against two people. Lose one and both hands come for the other.',
+    id: 4, name: 'TWO ARMS', sub: 'Two ports against two machines. Lose one and both arms come for the other.',
     movement: 'duo',
     time: 25, timeOnly: true,
     rail: { min: 90, max: 870 },
@@ -50,7 +50,7 @@ export const LEVELS = [
     slots: [160, 320, 480, 640, 800],
   },
   {
-    id: 5, name: 'BLACKOUT', sub: 'The crosshairs cut out. Watch the hand, not the marker.',
+    id: 5, name: 'BLACKOUT', sub: 'The crosshairs cut out. Watch the arm, not the marker.',
     movement: 'slots',
     time: 40, timeOnly: true,
     rail: { min: 90, max: 870 },
