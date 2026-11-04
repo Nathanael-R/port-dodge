@@ -1296,34 +1296,34 @@ function drawEnemy(E) {
   // the plug. Only its outer edge and tip are inked; the inner edge is a crease
   // that fades out where it joins the hand, so it reads as attached.
   const thumbTop = handY + 5;
-  const base = [L + 2, B - 14], outerTop = [L - 5, T + 2], tipL = [L + 4, thumbTop + 6], tipR = [L + 25, thumbTop + 7];
-  const inner = [L + 30, T + 18], seam = [L + 22, B - 22];
+  const base = [L + 2, B - 14], outerTop = [L - 3, T + 2], tipL = [L + 5, thumbTop + 6], tipR = [L + 21, thumbTop + 7];
+  const inner = [L + 24, T + 18], seam = [L + 18, B - 22];
   const thumbPath = () => {
     ctx.beginPath();
     ctx.moveTo(...base);
-    ctx.bezierCurveTo(L - 7, B - 38, L - 8, T + 18, ...outerTop);
-    ctx.bezierCurveTo(L - 3, T - 8, L - 2, thumbTop + 12, ...tipL);
-    ctx.bezierCurveTo(L + 8, thumbTop - 2, L + 22, thumbTop - 2, ...tipR);
-    ctx.bezierCurveTo(L + 29, thumbTop + 12, L + 31, T + 6, ...inner);
+    ctx.bezierCurveTo(L - 4, B - 38, L - 5, T + 18, ...outerTop);
+    ctx.bezierCurveTo(L - 2, T - 8, L - 1, thumbTop + 12, ...tipL);
+    ctx.bezierCurveTo(L + 8, thumbTop - 1, L + 19, thumbTop - 1, ...tipR);
+    ctx.bezierCurveTo(L + 24, thumbTop + 12, L + 25, T + 6, ...inner);
   };
   thumbPath();
-  ctx.quadraticCurveTo(L + 29, B - 34, ...seam);
+  ctx.quadraticCurveTo(L + 23, B - 34, ...seam);
   ctx.closePath();
   ctx.fillStyle = skin; ctx.fill();
   // a sliver of shade under the thumb's inner edge gives it some depth
   ctx.save(); ctx.clip();
-  ctx.fillStyle = skinShade; ctx.fillRect(L + 22, T - 4, 12, B - T);
+  ctx.fillStyle = skinShade; ctx.fillRect(L + 17, T - 4, 10, B - T);
   ctx.restore();
   thumbPath();
   ctx.strokeStyle = C.ink; ctx.lineWidth = 1.5; ctx.stroke();
   ctx.strokeStyle = 'rgba(26,25,22,.35)'; ctx.lineWidth = 1.3;
-  ctx.beginPath(); ctx.moveTo(...inner); ctx.quadraticCurveTo(L + 29, B - 34, ...seam); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(...inner); ctx.quadraticCurveTo(L + 23, B - 34, ...seam); ctx.stroke();
   // nail, and the knuckle fold below it
-  rr(L + 6, thumbTop + 3, 15, 11, [6, 6, 3, 3]);
+  rr(L + 7, thumbTop + 3, 11, 10, [5, 5, 3, 3]);
   ctx.fillStyle = '#efcfb2'; ctx.fill();
   ctx.strokeStyle = 'rgba(26,25,22,.55)'; ctx.lineWidth = 1.2; ctx.stroke();
   ctx.strokeStyle = 'rgba(26,25,22,.3)';
-  ctx.beginPath(); ctx.moveTo(L + 2, T + 6); ctx.quadraticCurveTo(L + 12, T + 9, L + 24, T + 6); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(L + 2, T + 6); ctx.quadraticCurveTo(L + 10, T + 9, L + 19, T + 6); ctx.stroke();
 
   // tracking: a dashed ring says "it's looking for you", without claiming a target yet
   if (E.state === 'track') {
