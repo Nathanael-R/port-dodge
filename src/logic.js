@@ -58,6 +58,26 @@ export function createEnemy(x, startDelay) {
   return { state: 'idle', t: startDelay, x, lockedX: x, doubleQueued: false, blackout: false };
 }
 
+// Plug personalities: a hand's `plug` key reshapes the level's enemy block.
+//   'a' USB-A bruiser: full-width plug, long readable wind-up, never double-jabs.
+//   'c' USB-C jabber: narrow plug, short warning, quick recovery, more doubles.
+// Track speed is left alone so the "never outrun the port" rule still holds.
+export function handParams(enemy, hand = {}) {
+  const ep = { ...enemy, ...hand };
+  if (hand.plug === 'a') {
+    ep.lockTime *= 1.2;
+    ep.strikeTime *= 1.15;
+    ep.doubles = 0;
+  } else if (hand.plug === 'c') {
+    ep.plugW = Math.round(ep.plugW * 0.65);
+    ep.lockTime = Math.max(0.42, ep.lockTime * 0.75); // same floor as endless' deepest rounds
+    ep.strikeTime = Math.max(0.12, ep.strikeTime * 0.85);
+    ep.recoverTime *= 0.75;
+    ep.doubles = Math.min(0.45, (ep.doubles || 0) + 0.15);
+  }
+  return ep;
+}
+
 // focus: {x, v} of the nearest living port. Returns events: 'locked'|'struck'|'impact'.
 // roll: random source (injectable for deterministic tests).
 export function stepEnemy(E, dt, focus, cfg, roll = Math.random) {

@@ -1,10 +1,10 @@
 import { createFrameScheduler, canvasSize } from './runtime.js';
-import { drawUSBStick, drawUSBPort } from './usb-art.js';
+import { drawUSBStick, drawUSBCStick, drawUSBPort } from './usb-art.js';
 import { createInput } from './input.js';
 import { sfx, toggleMute, unlockAudio, suspendAudio } from './audio.js';
 import { detectOS, osCopy } from './os.js';
 import { LEVELS, buildEndlessRound, endlessClearBonus, SCORE } from './levels.js';
-import { W, H, EDGE_Y, resolveStrike, hopSlot, levelWon, stepFree, createEnemy, stepEnemy, separateEnemies, botAxisFreeMulti, botSlotDirMulti, strikeLockout, absorbHit, applyDeadWalls, createBlocker, stepBlocker, pushOutOfZone, safestSlot, pickStartSeals, applyRamp, genQuiz, pickTideTrim, sealRail, unsealTick } from './logic.js';
+import { W, H, EDGE_Y, handParams, resolveStrike, hopSlot, levelWon, stepFree, createEnemy, stepEnemy, separateEnemies, botAxisFreeMulti, botSlotDirMulti, strikeLockout, absorbHit, applyDeadWalls, createBlocker, stepBlocker, pushOutOfZone, safestSlot, pickStartSeals, applyRamp, genQuiz, pickTideTrim, sealRail, unsealTick } from './logic.js';
 import { createFX, createNearMissSlowMo } from './fx.js';
 
 const canvas = document.getElementById('game');
@@ -39,6 +39,18 @@ const elFlip = document.getElementById('hud-flip');
 const fill = document.getElementById('timefill');
 const pauseButton = document.getElementById('btn-pause');
 function setText(el, value) { if (el.textContent !== value) el.textContent = value; }
+
+// Canvas palette; style.css mirrors the same paper / ink / signal tokens.
+const C = {
+  desk: '#e3ded2', grid: 'rgba(26,25,22,.06)', gridMajor: 'rgba(26,25,22,.13)',
+  ink: '#1a1916', ink2: '#55524b', ink3: '#8a867c', slab: '#2b2a27',
+  signal: '#dd4a1f', good: '#2e6b45', caution: '#e2a72e',
+};
+const font = (weight, size) => `${weight} ${size}px Archivo, "Arial Narrow", Arial, sans-serif`;
+const condensed = (weight, size) => `${weight} condensed ${size}px Archivo, "Arial Narrow", Arial, sans-serif`;
+const mono = (size, weight = 500) => `${weight} ${size}px "IBM Plex Mono", ui-monospace, monospace`;
+// Webfonts arrive after the first paint; redraw the cached backdrop once they land.
+Promise.all([font(600, 14), condensed(800, 20), mono(11)].map(f => document.fonts?.load(f))).catch(() => {}).then(() => { stageBackdrop = null; frame.screen = null; wake(); });
 
 // OS flavor: real detection with a preview override (?os=mac|windows|linux).
 // Drives the laptop art, footer joke, and CSS theme via body[data-os].
@@ -89,15 +101,16 @@ const levelTrack = document.querySelector('.level-track');
 if (levelTrack) {
   levelTrack.textContent = '';
   LEVELS.forEach((l, i) => {
-    const s = document.createElement('span');
-    s.append(`${String(i + 1).padStart(2, '0')} `);
+    const li = document.createElement('li');
+    const em = document.createElement('em');
+    em.textContent = String(i + 1).padStart(2, '0');
     const b = document.createElement('b');
-    b.textContent = l.name.toLowerCase();
-    s.append(b);
-    levelTrack.append(s);
+    b.textContent = l.name;
+    li.append(em, b);
+    levelTrack.append(li);
   });
 }
-const levelMarkers = [...document.querySelectorAll(".level-track > span")];
+const levelMarkers = [...document.querySelectorAll(".level-track > li")];
 
 function cfg() { return S.customCfg || LEVELS[S.levelIdx]; }
 
@@ -150,8 +163,10 @@ function setupRound(c) {
   // one FSM per hand; extra hands stagger in and may tune the base params
   S.enemies = (c.hands || [{}]).map((h, i) => {
     const E = createEnemy(480 + (i === 0 ? 0 : (i % 2 ? 150 : -150)), h.startDelay ?? e.startDelay);
-    E.ep = { ...e, ...h };
-    E.sleeve = i === 0 ? '#31405f' : '#5f313d'; // second human wears a rust-red sleeve
+    E.ep = handParams(e, h);
+    // industrial yellow for the lead arm, steel blue for extras, clean-room grey for jabbers
+    E.paint = E.ep.plug === 'c' ? '#d6d3ca' : i === 0 ? '#e2a72e' : '#8796ab';
+    E.accent = E.ep.plug === 'c' ? C.caution : C.signal; // jabbers carry an amber plug
     E.tipY = restTipY();
     return E;
   });
@@ -181,58 +196,99 @@ function hide() {
   resizeCanvas();
   canvas.focus({ preventScroll: true });
 }
+
+const pad2 = (n) => String(n).padStart(2, '0');
+const sentence = (s) => s.charAt(0) + s.slice(1).toLowerCase();
+const KEY = { space: '<kbd>Space</kbd>', r: '<kbd>R</kbd>', p: '<kbd>P</kbd>' };
+const head = (left, right = '') => `<div class="card-head"><span>${left}</span><span>${right}</span></div>`;
+const spec = (rows) => `<dl class="spec">${rows.map(([k, v, tone]) => `<div${tone ? ` class="${tone}"` : ''}><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>`;
+const figures = (items, cls = '') => `<div class="figures ${cls}">${items.map(([v, k]) => `<div><strong>${v}</strong><span>${k}</span></div>`).join('')}</div>`;
+const MOVEMENT = { free: 'Free slide', slots: 'Five slots', duo: 'Two ports' };
+
 function showMenu() {
   resetLevel(0);
   S.paused = false; S.mode = 'levels'; S.screen = 'menu'; hud.classList.add('hidden');
   const best = loadBest();
   show(`<div class="card menu-card flash">
-    <div class="tag"><span class="status-dot"></span> SMALL PORT. BIG ATTITUDE.</div>
-    <h1>Stay<br><em>unplugged.</em></h1>
-    <p class="big">You're the USB port.<br>The human needs a connection. You need space.</p>
-    <div class="btnrow"><button class="cta" data-act="start">Let's dodge <span>→</span></button><button class="ghost" data-act="endless">∞ Endless</button></div>
-    <div class="menu-meta">${LEVELS.length} levels of connection issues <span>•</span> ${best ? `Best endless: ${best.toLocaleString()}` : 'Zero cables attached'}</div>
-    <div class="quick-guide"><span><b>01</b> Bait the hand</span><span><b>02</b> Wait for red</span><span><b>03</b> Get out of there</span></div>
+    <h1>Stay<br> unplugged.</h1>
+    <p class="lede">You are a USB port. A machine wants to plug something into you. Be somewhere else.</p>
+    <ol class="steps">
+      <li><span>1</span><div><b>Watch the arm.</b> It drifts toward you.</div></li>
+      <li><span>2</span><div><b>Red means locked.</b> The strike lands exactly there.</div></li>
+      <li><span>3</span><div><b>Move.</b> A and D, arrow keys, or drag.</div></li>
+    </ol>
+    <div class="actions"><button class="cta" data-act="start">Start campaign ${KEY.space}</button><button class="ghost" data-act="endless">Endless mode</button></div>
+    <p class="meta">${LEVELS.length} levels &middot; best endless score ${best ? best.toLocaleString() : 'none yet'}</p>
   </div>`);
 }
+
+// The briefing is a spec table: one row per rule that applies to this level.
+function briefRows(c) {
+  const rows = [];
+  rows.push(['Movement', {
+    free: 'Slide along the edge with A and D, the arrow keys, or by dragging.',
+    slots: 'Hop between slots with 1 to 5, the arrow keys, or a tap. Hops fail once the strike is moving, so commit while the target is red.',
+    duo: 'Both ports move together. A plugged port leaves its cable behind, and the other cannot cross it.',
+  }[c.movement]]);
+  rows.push(['To clear', c.timeOnly ? `Survive ${c.time} seconds.` : `Survive ${c.time} seconds, or make the arm miss ${c.missesToWin} times.`]);
+  const hands = (c.hands || [{}]);
+  if (hands.length > 1) rows.push(['Opponents', `${hands.length} arms, each chasing whichever port is closest.`]);
+  const plugs = new Set(hands.map(h => h.plug).filter(Boolean));
+  if (plugs.has('a')) rows.push(['USB-A', 'The bruiser. Heavy yellow clamp, full-width plug, a long wind-up and one strike at a time.']);
+  if (plugs.has('c')) rows.push(['USB-C', 'The jabber. Slim grey arm, narrow plug: a short warning, a tight ring, and it often strikes twice.', 'warn']);
+  if (hands.some(h => ((h.blackout ?? c.enemy.blackout) || 0) > 0)) rows.push(['Blackout', 'The crosshair sometimes cuts out. Read where the arm is drifting.', 'warn']);
+  if (c.blocker) rows.push(c.blocker.kind === 'slot'
+    ? ['Seized slot', 'One slot at a time gets taken. Leave when it flashes or you will be ejected.', 'warn']
+    : ['Barricades', `Sections of ${Math.round(c.blocker.frac * 100)}% get taped off. Leave when the outline flashes.`, 'warn']);
+  if (c.startSeals) rows.push(['Sealed', `${c.startSeals} slots start blocked, leaving ${c.slots.length - c.startSeals}.`, 'warn']);
+  if (c.enemy.ramp) rows.push(['Speed', 'The arm gets a little faster after every strike.', 'warn']);
+  if (c.quiz) rows.push(['Pop quiz', 'Time freezes and the plug creeps closer. Answer to unfreeze it. A wrong answer means an instant strike.', 'warn']);
+  if (c.sealTide) rows.push(['Seal tide', 'The ends of the edge get sealed over time. Every third close call wins a section back.', 'warn']);
+  if (S.flipLife) rows.push(['Spare life', 'Flip-flop. Your ports hang upside down and the first plug to land is absorbed.', 'good']);
+  return rows;
+}
+
 function showIntro() {
   S.screen = 'intro'; hud.classList.remove('hidden'); updateHud();
   const c = cfg();
   show(`<div class="card flash">
-    <div class="tag">LEVEL ${c.id} OF ${LEVELS.length}</div>
-    <h2>${c.name}</h2><p class="big">${c.sub}</p>
-    <p>${c.movement === 'free' ? 'Free slide. Long telegraphs. One slow human.' : c.movement === 'slots' ? 'No more free sliding — you live in the glowing slots now. The hand is faster and sometimes double-jabs. Hop <b>before</b> the strike: mid-strike hops fizzle with a <b>TOO LATE!</b>' : c.id === 4 ? 'Two ports, one command — against TWO humans. A dead port becomes a wall, and both hands will hunt whoever is left.' : 'Two ports, one command. Lose one and its corpse blocks the survivor — keep dodging with the other.'}
-    Survive <b>${c.time}s</b>${c.timeOnly ? '.' : ` or force <b>${c.missesToWin} misses</b>.`}</p>
-    ${((c.hands || []).some(h => ((h.blackout ?? c.enemy.blackout) || 0) > 0)) ? `<p>⚡ Their crosshairs <b>cut out at random</b> — read the hand's drift, not the marker.</p>` : ''}
-    ${c.blocker ? `<p>🚧 The humans barricade the edge${c.blocker.kind === 'slot' ? ' — one slot gets seized at a time' : ` in ${Math.round(c.blocker.frac * 100)}% chunks`} — clear the flashing outline before it goes solid.</p>` : ''}
-    ${c.startSeals ? `<p>🔌 ${c.startSeals} slots come pre-sealed by stuck plugs — ${c.slots.length - c.startSeals} left to dodge between. No take-backs.</p>` : ''}
-    ${c.enemy.ramp ? `<p>⚡ The hunter gets <b>faster every strike</b> — end this quickly.</p>` : ''}
-    ${c.quiz ? `<p>📐 Time <b>freezes</b> and the plug creeps — answer the math to unfreeze it. Wrong answers earn a point-blank lock.</p>` : ''}
-    ${c.sealTide ? `<p>🦭 The edge gets <b>sealed off</b> over time — your lane shrinks. Every <b>3rd CLOSE!!</b> dodge reclaims a chunk. Narrow escapes are the currency.</p>` : ''}
-    ${S.flipLife ? `<p>🎁 <b>FLIP-FLOP ACTIVE:</b> your ports hang upside-down — the first plug is on the house.</p>` : ''}
-    <div class="btnrow"><button class="cta" data-act="play">DODGE!</button></div>
+    ${head(`Level ${pad2(c.id)} of ${pad2(LEVELS.length)}`, MOVEMENT[c.movement])}
+    <h2>${sentence(c.name)}</h2>
+    <p class="lede">${c.sub}</p>
+    ${spec(briefRows(c))}
+    <div class="actions"><button class="cta" data-act="play">Start level ${KEY.space}</button></div>
   </div>`);
 }
+
 function showEnd(win) {
   S.screen = win ? 'win' : 'lose';
   const c = cfg();
   if (S.mode === 'endless' && !win) return showEndlessGameOver();
   if (S.mode === 'endless' && win) { startNextRound(); return; } // safety: endless advances without cards
   const last = S.levelIdx === LEVELS.length - 1;
-  const title = win ? (last ? 'YOU REMAIN UNPLUGGED' : 'DODGED!') : 'PLUGGED IN';
+  const title = win ? (last ? 'Still unplugged.' : 'Dodged.') : 'Plugged in.';
   const sub = win
-    ? (last ? `${LEVELS.length} levels. Zero commitment. The humans are filing a bug report.` : `Connection avoided. Ready for the next human?${c.id === 3 ? ' FLIP-FLOP earned: your next plug is on the house.' : ''}`)
-    : 'The human finally made a connection. Make it work harder next time.';
-  show(`<div class="card result-card flash">
-    <div class="result-icon ${win ? 'won' : 'lost'}" aria-hidden="true">${win ? '✓' : '×'}</div>
-    <div class="tag">${win ? 'LEVEL CLEAR' : 'PORT LOST'} · LEVEL ${c.id}</div>
-    <h2>${title}</h2><p class="big">${sub}</p>
-    <div class="result-stats"><div><strong>${S.score.toLocaleString()}</strong><span>RUN SCORE</span></div><div><strong>${S.misses}</strong><span>DODGES</span></div><div><strong>${S.elapsed.toFixed(1)}<small>s</small></strong><span>SURVIVED</span></div></div>
-    ${win ? `<p class="bonus">+${endlessClearBonus(S.levelIdx + 1)} level clear bonus</p>` : ''}
-    <div class="btnrow">
-      ${win && !last ? `<button class="cta" data-act="next">NEXT LEVEL →</button>` : ''}
-      ${win && last ? `<button class="cta" data-act="menu">BACK TO MENU</button>` : ''}
-      <button class="ghost" data-act="retry">↻ RETRY (R)</button>
-      ${!win && S.levelIdx > 0 ? `<button class="ghost" data-act="menu">MENU</button>` : ''}
+    ? (last ? `${LEVELS.length} levels and not one connection. Someone is filing a bug report.` : `Connection refused.${c.id === 3 ? ' You earned a <b>flip-flop</b>: the next plug that lands is absorbed.' : ''}`)
+    : 'The machine got its connection. Make it work harder next time.';
+  show(`<div class="card flash">
+    ${head(`Level ${pad2(c.id)} of ${pad2(LEVELS.length)}`, win ? '<span class="ok">Cleared</span>' : '<span class="bad">Port lost</span>')}
+    <h2>${title}</h2>
+    <p class="lede">${sub}</p>
+    ${win ? figures([
+      [S.score.toLocaleString(), 'Run score'],
+      [S.misses, 'Dodges'],
+      [`${S.elapsed.toFixed(1)}<small>s</small>`, 'Survived'],
+      [`<span class="plus">+${endlessClearBonus(S.levelIdx + 1)}</span>`, 'Clear bonus'],
+    ]) : figures([
+      [S.score.toLocaleString(), 'Run score'],
+      [S.misses, 'Dodges'],
+      [`${S.elapsed.toFixed(1)}<small>/${c.time}s</small>`, 'Survived'],
+    ], 'three')}
+    <div class="actions">
+      ${win && !last ? `<button class="cta" data-act="next">Next level ${KEY.space}</button>` : ''}
+      ${win && last ? `<button class="cta" data-act="menu">Back to menu</button>` : ''}
+      <button class="${win ? 'ghost' : 'cta'}" data-act="retry">Retry ${KEY.r}</button>
+      ${!win ? `<button class="ghost" data-act="menu">Menu</button>` : ''}
     </div></div>`);
 }
 function wireButtons() {
@@ -241,7 +297,7 @@ function wireButtons() {
       sfx.ui();
       const a = b.dataset.act;
       if (a === 'start') { S.mode = 'levels'; S.flipLife = false; S.score = 0; resetLevel(0); snapshotScore(); showIntro(); }
-      else if (a === 'play') { hide(); S.screen = 'playing'; S.banner = { str: 'DODGE!', sub: '', t: 0.9 }; }
+      else if (a === 'play') { hide(); S.screen = 'playing'; S.banner = { str: 'DODGE', sub: '', t: 0.9 }; }
       else if (a === 'retry') doRetry();
       else if (a === 'endless') showEndlessIntro();
       else if (a === 'endless-go') { hide(); startEndless(); }
@@ -268,17 +324,16 @@ function showEndlessIntro() {
   S.screen = 'intro'; hud.classList.add('hidden');
   const best = loadBest();
   show(`<div class="card flash">
-    <div class="tag">♾️ ENDLESS MODE</div>
-    <h2>HOW LONG CAN YOU STAY UNPLUGGED?</h2>
-    <p class="big">All eight challenges on repeat — free slide, slots, duo, two hands, blackout, crowded edge, pop quiz, seal team — meaner every round: faster hands, shorter telegraphs, extra hands, spreading barricades.</p>
-    <ul class="howto">
-      <li>Miss forced: <b>+${SCORE.MISS}</b> · near-miss: <b>+${SCORE.NEAR}</b> · round clear: <b>500+</b></li>
-      <li>Only the <b>timer</b> moves you on — dodges score, survival advances</li>
-      <li>Every 3rd round clears a <b>⟲ FLIP-FLOP</b> extra life (if you don't hold one)</li>
-      <li>Run ends when every port is plugged. Best score lives on this machine.</li>
-    </ul>
-    ${best > 0 ? `<p>BEST: <b>${best}</b> pts — beat it.</p>` : ''}
-    <div class="btnrow"><button class="cta" data-act="endless-go">START RUN</button><button class="ghost" data-act="menu">MENU</button></div>
+    ${head('Endless mode', best > 0 ? `Best ${best.toLocaleString()}` : 'No best yet')}
+    <h2>How long can you last?</h2>
+    <p class="lede">All eight levels on repeat. Each round the arms get faster, the warnings get shorter, and more of them show up.</p>
+    ${spec([
+      ['Scoring', `Miss +${SCORE.MISS}. Close call +${SCORE.NEAR}. Round clear 500 and up.`],
+      ['To advance', 'Survive the 25 second timer. Dodges only add to your score.'],
+      ['Spare life', 'Every third round gives you a flip-flop, or 250 points if you already hold one.', 'good'],
+      ['Game over', 'When every port is plugged. Your best score stays on this device.'],
+    ])}
+    <div class="actions"><button class="cta" data-act="endless-go">Start run ${KEY.space}</button><button class="ghost" data-act="menu">Menu</button></div>
   </div>`);
 }
 
@@ -294,6 +349,7 @@ function roundTags(c) {
   const tags = [];
   const hands = (c.hands || [{}]).length;
   if (hands > 1) tags.push(`${hands} HANDS`);
+  if ((c.hands || []).some(h => h.plug === 'c')) tags.push('USB-C');
   const bo = c.enemy.blackout || 0;
   if (bo > 0) tags.push(`blackout ${Math.round(bo * 100)}%`);
   if (c.blocker) tags.push(c.blocker.kind === 'slot' ? 'seized slots' : 'barricades');
@@ -315,7 +371,7 @@ function startNextRound() {
   const c = cfg();
   const tags = roundTags(c) + (S.flipEarned ? (roundTags(c) ? ' · ' : '') + '+FLIP' : '');
   S.flipEarned = false;
-  S.banner = { str: `ROUND ${S.round}`, sub: `${c.name}${tags ? ' — ' + tags : ''}`, t: 2.2 };
+  S.banner = { str: `ROUND ${S.round}`, sub: `${c.name}${tags ? ' / ' + tags : ''}`, t: 2.2 };
   updateHud();
 }
 
@@ -339,7 +395,7 @@ function snapshotScore() { S.scoreAtStart = S.score; }
 function doRetry() {
   hide();
   if (S.mode === 'endless') startEndless();
-  else { S.score = S.scoreAtStart; resetLevel(S.levelIdx); S.screen = 'playing'; S.banner = { str: 'AGAIN!', sub: '', t: 0.8 }; }
+  else { S.score = S.scoreAtStart; resetLevel(S.levelIdx); S.screen = 'playing'; S.banner = { str: 'AGAIN', sub: '', t: 0.8 }; }
 }
 
 function showEndlessGameOver() {
@@ -348,13 +404,17 @@ function showEndlessGameOver() {
   const newBest = S.score > best;
   if (newBest) saveBest(S.score);
   show(`<div class="card flash">
-    <div class="tag">RUN OVER — ROUND ${S.round}: ${cfg().name}</div>
-    <h2>Finally connected.</h2>
-    <p class="big">The humans finally got you.${newBest ? ' <b>NEW BEST!</b>' : ''}</p>
-    <p>SCORE <b>${S.score}</b> · BEST <b>${Math.max(best, S.score)}</b> · reached round <b>${S.round}</b></p>
-    <div class="btnrow">
-      <button class="cta" data-act="retry">↻ NEW RUN (R)</button>
-      <button class="ghost" data-act="menu">MENU</button>
+    ${head('Endless mode', newBest ? '<span class="ok">New best</span>' : '<span class="bad">Run over</span>')}
+    <h2>Connected.</h2>
+    <p class="lede">They got you in round ${S.round}, ${sentence(cfg().name).replace(/ \+\d+$/, '')}.${newBest ? ' That is your best run yet.' : ''}</p>
+    ${figures([
+      [S.score.toLocaleString(), 'Score'],
+      [Math.max(best, S.score).toLocaleString(), 'Best'],
+      [S.round, 'Round'],
+    ], 'three')}
+    <div class="actions">
+      <button class="cta" data-act="retry">New run ${KEY.r}</button>
+      <button class="ghost" data-act="menu">Menu</button>
     </div></div>`);
 }
 
@@ -381,20 +441,24 @@ function updateHud() {
       else el.removeAttribute('aria-current');
     });
   }
-  setText(elLevel, S.mode === 'endless' ? `R${S.round} · ${c.name}` : `${c.id} · ${c.name}`);
+  const levelHtml = S.mode === 'endless'
+    ? `<b>R${pad2(S.round)}</b><span>${c.name}</span>`
+    : `<b>${pad2(c.id)}/${pad2(LEVELS.length)}</b><span>${c.name}</span>`;
+  if (elLevel.dataset.key !== levelHtml) { elLevel.dataset.key = levelHtml; elLevel.innerHTML = levelHtml; }
   setText(elScore, S.score.toLocaleString());
   const remain = Math.max(0, c.time - S.elapsed);
-  setText(elTime, `${remain.toFixed(1)}s`);
+  setText(elTime, remain.toFixed(1));
   const timeOnly = !!c.timeOnly || S.mode === 'endless';
-  setText(elMiss, timeOnly ? `${S.misses}` : `${S.misses} / ${c.missesToWin}`);
+  setText(elMiss, timeOnly ? `${S.misses}` : `${S.misses}/${c.missesToWin}`);
   elMiss.title = timeOnly
-    ? 'forced misses — survive the timer to advance'
-    : `${S.misses}/${c.missesToWin} forced misses`;
-  setText(elPorts, S.ports.map(p => p.alive ? '●' : '✕').join(' '));
-  elPorts.style.color = S.ports.some(p => p.alive) ? '' : 'var(--warn)';
+    ? 'Forced misses. Survive the timer to advance.'
+    : `${S.misses} of ${c.missesToWin} forced misses needed`;
+  const portsHtml = S.ports.map(p => p.alive ? '<i></i>' : '<i class="dead"></i>').join('');
+  if (elPorts.dataset.key !== portsHtml) { elPorts.dataset.key = portsHtml; elPorts.innerHTML = portsHtml; }
+  elPorts.title = `${S.ports.filter(p => p.alive).length} of ${S.ports.length} ports free`;
   if (elFlip) {
     elFlip.style.display = S.flipLife ? '' : 'none';
-    elFlip.textContent = S.invuln > 0 ? '⟲ phased…' : '⟲ +1 FLIP';
+    setText(elFlip.lastElementChild, S.invuln > 0 ? 'Phasing' : 'Flip-flop');
   }
   const elSeal = document.getElementById('hud-seal');
   if (elSeal) {
@@ -403,8 +467,8 @@ function updateHud() {
     if (on) {
       const usable = S.sealed.length ? sealRail(c.rail, S.sealed) : c.rail;
       const lost = Math.round((1 - (usable.max - usable.min) / (c.rail.max - c.rail.min)) * 100);
-      elSeal.textContent = `🔓 ${S.unsealPips}/3 CLOSE!!${lost > 0 ? ` · edge −${lost}%` : ''}`;
-      elSeal.title = 'The edge gets sealed over time — every 3rd CLOSE!! dodge reclaims a chunk';
+      setText(elSeal.lastElementChild, `${S.unsealPips}/3${lost > 0 ? ` · −${lost}%` : ''}`);
+      elSeal.title = 'The edge gets sealed over time. Every third close call reclaims a section.';
     }
   }
   if (fill) {
@@ -427,7 +491,7 @@ function enemyUpdate(dt) {
 
     const ev = stepEnemy(E, dt, { x: focus?.x ?? E.x, v: focus?.vx || 0 }, c);
     for (const e of ev) {
-      if (e === 'locked') { sfx.lock(); S.tickAcc = 0; }
+      if (e === 'locked') { sfx.lock(E.ep?.plug === 'c'); S.tickAcc = 0; }
       if (e === 'struck') sfx.whoosh();
       if (e === 'impact') impact(E);
     }
@@ -476,7 +540,8 @@ function impact(E) {
     if (res === 'shielded') {
       // FLIP-FLOP absorbs the plug: port flips right-side up, phases out briefly
       S.flipLife = false; S.invuln = 1.0;
-      fx.text(victim.x, 300, 'FLIP SAVED YOU!', '#7bff9e', 30, 1.2);
+      setMood(victim, 'wince', 1.0);
+      fx.text(victim.x, 300, 'SAVED BY THE FLIP', C.good, 30, 1.2);
       fx.sparks(E.lockedX, EDGE_Y + 8);
       fx.addShake(8); fx.stop(0.15);
       sfx.saved();
@@ -496,14 +561,17 @@ function impact(E) {
       S.screen = 'lose-pending';
     } else {
       const walled = cfg().movement === 'duo';
-      fx.text(480, 300, walled ? 'PORT LOST — IT BLOCKS YOU NOW!' : 'PORT LOST!', '#ff5470', walled ? 28 : 34, 1.2);
+      fx.text(480, 300, walled ? 'PORT LOST. ITS CABLE BLOCKS YOU' : 'PORT LOST', C.signal, walled ? 28 : 34, 1.2);
     }
   } else {
     S.misses++;
     S.score += outcome === 'near' ? SCORE.NEAR : SCORE.MISS;
+    // the port that nearly got it winces; everyone else is just relieved
+    const closest = S.ports.filter(p => p.alive).reduce((a, b) => !a || Math.abs(b.x - E.lockedX) < Math.abs(a.x - E.lockedX) ? b : a, null);
+    for (const p of S.ports) setMood(p, outcome === 'near' && p === closest ? 'wince' : 'relief', 0.7);
     S.dents.push({ x: E.lockedX, t: 0 });
     if (outcome === 'near') {
-      fx.text(E.lockedX, 300, `CLOSE!! +${SCORE.NEAR}`, '#7bff9e', 26, 1.0);
+      fx.text(E.lockedX, 300, `CLOSE CALL +${SCORE.NEAR}`, C.good, 26, 1.0);
       sfx.nearMiss();
       if (!roundWon()) nearMissSlowMo.trigger();
       fx.addShake(7);
@@ -517,13 +585,13 @@ function impact(E) {
           const popped = S.sealed.shift();
           const edgeX = popped.side < 0 ? before.min : before.max;
           fx.poof(edgeX, EDGE_Y);
-          fx.text(edgeX, EDGE_Y - 64, 'EDGE RECLAIMED!', '#7bff9e', 20, 1.0);
+          fx.text(edgeX, EDGE_Y - 64, 'EDGE RECLAIMED', C.good, 20, 1.0);
           sfx.saved();
         }
         updateHud();
       }
     } else {
-      fx.text(E.lockedX, 310, `MISS! +${SCORE.MISS}`, '#4dd8ff', 22, 0.8);
+      fx.text(E.lockedX, 310, `MISS +${SCORE.MISS}`, C.ink, 22, 0.8);
       fx.addShake(6);
     }
     fx.sparks(E.lockedX, EDGE_Y + 8);
@@ -564,7 +632,7 @@ function blockerUpdate(dt) {
         const bi = safestSlot(c.slots || [], B.slot, threats);
         if (bi >= 0) { p.slot = bi; p.x = c.slots[bi]; p.squash = 1; fx.poof(p.x, EDGE_Y); }
       }
-      fx.text(c.slots[B.slot], EDGE_Y - 64, 'EJECTED!', '#ffd166', 20, 0.8);
+      fx.text(c.slots[B.slot], EDGE_Y - 64, 'EJECTED', C.caution, 20, 0.8);
       sfx.deny();
     }
   }
@@ -587,12 +655,12 @@ function freezeQuiz() {
     E.state = 'lock'; E.blackout = false;
     E.lockedX = Math.max(rail.min, Math.min(rail.max, f ? f.x : E.x));
   }
-  show(`<div class="card flash">
-    <div class="tag">⏸ TIME FROZEN</div>
-    <h2>${q.a} ${q.op} ${q.b} = ?</h2>
-    <p class="big">The plug is creeping toward you. Answer to unfreeze time.</p>
-    <div class="btnrow">${q.options.map((o, i) => `<button class="cta" data-ans="${i}">${o}</button>`).join('')}</div>
-    <p><span class="kbd">1</span><span class="kbd">2</span><span class="kbd">3</span> or tap · <span id="quiz-t">${Math.ceil(timeout)}</span>s left</p>
+  show(`<div class="card quiz flash">
+    ${head('Time frozen', `<span id="quiz-t">${Math.ceil(timeout)}</span>s left`)}
+    <h2>${q.a} ${q.op} ${q.b}</h2>
+    <p class="lede">The plug is creeping closer. Answer to unfreeze time.</p>
+    <div class="answers">${q.options.map((o, i) => `<button class="ghost" data-ans="${i}"><span>${o}</span><kbd>${i + 1}</kbd></button>`).join('')}</div>
+    <div class="bar"><i id="quiz-bar"></i></div>
   </div>`);
   overlay.querySelectorAll('[data-ans]').forEach(btn => {
     btn.onclick = () => {
@@ -618,6 +686,8 @@ function quizUpdate(dt) {
   });
   const tEl = document.getElementById('quiz-t');
   if (tEl) tEl.textContent = String(Math.max(0, Math.ceil(q.t)));
+  const bar = document.getElementById('quiz-bar');
+  if (bar) bar.style.transform = `scaleX(${Math.max(0, q.t / q.timeout).toFixed(3)})`;
   if (q.t <= 0) resolveQuiz(false);
 }
 
@@ -628,13 +698,13 @@ function resolveQuiz(correct) {
   if (!wasQuiz) return;
   if (correct) {
     S.score += SCORE.QUIZ;
-    fx.text(480, 300, `SMART! +${SCORE.QUIZ}`, '#7bff9e', 30, 1.0);
+    fx.text(480, 300, `CORRECT +${SCORE.QUIZ}`, C.good, 30, 1.0);
     sfx.saved();
     for (const E of S.enemies) {
       E.state = 'track'; E.t = (E.ep || cfg().enemy).trackTime; E.doubleQueued = false;
     }
   } else {
-    fx.text(480, 300, 'WRONG!', '#ff5470', 30, 1.0);
+    fx.text(480, 300, 'WRONG', C.signal, 30, 1.0);
     sfx.deny();
     const alive = S.ports.filter(p => p.alive);
     for (const E of S.enemies) {
@@ -671,8 +741,9 @@ function playerUpdate(dt) {
     const denyHop = (reason) => {
       if (S.denyCd > 0) return;
       S.denyCd = 0.5;
-      fx.text(p.x, EDGE_Y - 64, reason, '#ff5470', 19, 0.6);
-      fx.burst(p.x, EDGE_Y - 10, 6, { colors: ['#ff5470', '#ffffff'], speed: 140, ttl: 0.3, size: 3 });
+      setMood(p, 'strain', 0.4);
+      fx.text(p.x, EDGE_Y - 64, reason, C.signal, 19, 0.6);
+      fx.burst(p.x, EDGE_Y - 10, 6, { colors: [C.signal, C.ink], speed: 140, ttl: 0.3, size: 3 });
       sfx.deny();
     };
     let dir = 0;
@@ -681,20 +752,20 @@ function playerUpdate(dt) {
     // number keys 1..5 direct
     for (let i = 0; i < c.slots.length; i++) {
       if (!framePressed.has(String(i + 1))) continue;
-      if (locked) { denyHop('TOO LATE!'); continue; }
-      if (i === seized) { denyHop('BLOCKED!'); continue; }
-      if (sealedHere(i)) { denyHop('SEALED!'); continue; }
+      if (locked) { denyHop('TOO LATE'); continue; }
+      if (i === seized) { denyHop('BLOCKED'); continue; }
+      if (sealedHere(i)) { denyHop('SEALED'); continue; }
       if (i === p.slot) continue;
       p.slot = i; p.x = c.slots[i]; p.hopCd = c.player.hopCooldown;
       p.squash = 1; fx.poof(p.x, EDGE_Y); sfx.hop();
     }
     if (dir !== 0) {
-      if (locked) denyHop('TOO LATE!');
+      if (locked) denyHop('TOO LATE');
       else if (p.hopCd <= 0) {
         const r = hopSlot(p.slot, dir, c.slots.length);
         if (r.moved) {
-          if (r.index === seized) denyHop('BLOCKED!');
-          else if (sealedHere(r.index)) denyHop('SEALED!');
+          if (r.index === seized) denyHop('BLOCKED');
+          else if (sealedHere(r.index)) denyHop('SEALED');
           else {
             p.slot = r.index; p.x = c.slots[p.slot]; p.hopCd = c.player.hopCooldown;
             p.squash = 1; fx.poof(p.x, EDGE_Y); sfx.hop();
@@ -707,9 +778,9 @@ function playerUpdate(dt) {
       let best = 0, bd = Infinity;
       c.slots.forEach((sx, i) => { const d = Math.abs(sx - tapX); if (d < bd) { bd = d; best = i; } });
       if (best >= 0) {
-        if (locked) denyHop('TOO LATE!');
-        else if (best === seized) denyHop('BLOCKED!');
-        else if (sealedHere(best)) denyHop('SEALED!');
+        if (locked) denyHop('TOO LATE');
+        else if (best === seized) denyHop('BLOCKED');
+        else if (sealedHere(best)) denyHop('SEALED');
         else if (best !== p.slot) { p.slot = best; p.x = c.slots[best]; p.hopCd = c.player.hopCooldown; p.squash = 1; fx.poof(p.x, EDGE_Y); sfx.hop(); }
       }
     }
@@ -754,9 +825,10 @@ function playerUpdate(dt) {
       // bump feedback when grinding against a corpse-wall or barricade
       if ((bumped || zoneBump) && axis !== 0 && S.bumpCd <= 0) {
         const wall = S.ports.find(p => !p.alive && p.stuckX != null);
-        fx.burst(wall ? wall.stuckX : S.center.x, EDGE_Y - 6, 6, { colors: ['#ffd166', '#ffffff'], speed: 150, ttl: 0.35, size: 3 });
+        fx.burst(wall ? wall.stuckX : S.center.x, EDGE_Y - 6, 6, { colors: [C.caution, C.ink], speed: 150, ttl: 0.35, size: 3 });
         sfx.bump();
         S.bumpCd = 0.35;
+        for (const p of S.ports) setMood(p, 'strain', 0.4);
       }
     } else {
       const p = S.ports[0];
@@ -764,12 +836,25 @@ function playerUpdate(dt) {
       p.squash = Math.min(1, Math.abs(p.vx) / 560);
       if (S.blocker && S.blocker.phase === 'active' && c.blocker && c.blocker.kind === 'rail') {
         const r = pushOutOfZone(p.x, { x: S.blocker.x, w: S.blocker.w });
-        if (r.moved) { p.x = r.x; S.center.x = r.x; }
+        if (r.moved) { p.x = r.x; S.center.x = r.x; setMood(p, 'strain', 0.3); }
       }
     }
   }
-  // squash decay
-  for (const p of S.ports) { p.squash = Math.max(0, (p.squash || 0) - dt * 4); if (p.vx) p.face = p.vx; }
+  // squash + mood decay
+  for (const p of S.ports) {
+    p.squash = Math.max(0, (p.squash || 0) - dt * 4); if (p.vx) p.face = p.vx;
+    if (p.mood && (p.mood.t -= dt) <= 0) p.mood = null;
+  }
+}
+
+// Short-lived facial reactions: relief after a dodge, a wince at a close call,
+// strain when shoved by a wall or a refused hop. Stronger moods are not
+// overwritten by weaker ones while they last.
+const MOOD_RANK = { relief: 0, strain: 1, wince: 2 };
+function setMood(p, kind, t) {
+  if (!p?.alive) return;
+  if (p.mood && MOOD_RANK[p.mood.kind] > MOOD_RANK[kind]) return;
+  p.mood = { kind, t };
 }
 
 // ---------- pause ----------
@@ -778,7 +863,18 @@ function togglePause() {
   if (S.quiz) return; // pop quiz is its own 6-second pause — don't stack cards on it
   S.paused = !S.paused;
   if (S.paused) { S.screen = 'paused';
-    show(`<div class="card"><div class="tag">PAUSED</div><h2>Take a breath.</h2><p>The human can wait.</p><p>Move with A / D or ← / →, or drag the port.<br>In slot levels, tap a slot or press 1–5.<br>Wait for the red lock, then dodge before the strike.</p><div class="btnrow"><button class="cta" data-act="resume">RESUME</button></div></div>`);
+    const c = cfg();
+    show(`<div class="card">
+      ${head('Paused', S.mode === 'endless' ? `Round ${S.round}` : `Level ${pad2(c.id)} of ${pad2(LEVELS.length)}`)}
+      <h2>Take a breath.</h2>
+      <p class="lede">The machine can wait.</p>
+      ${spec([
+        ['Slide', 'A and D, the arrow keys, or drag.'],
+        ['Slots', 'Press 1 to 5, or tap a slot.'],
+        ['Timing', 'Wait for the red lock, then move before the strike.'],
+      ])}
+      <div class="actions"><button class="cta" data-act="resume">Resume ${KEY.p}</button><button class="ghost" data-act="menu">Quit to menu</button></div>
+    </div>`);
     overlay.querySelector('[data-act="resume"]').onclick = () => { sfx.ui(); hide(); S.paused = false; S.screen = 'playing'; };
   } else { hide(); S.screen = 'playing'; }
 }
@@ -791,31 +887,18 @@ function rr(x, y, w, h, r) {
 
 function draw() {
   ctx.save();
-  ctx.fillStyle = '#19221c'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = C.desk; ctx.fillRect(0, 0, W, H);
   ctx.translate(fx.shakeX, fx.shakeY);
 
   if (!stageBackdrop) {
     stageBackdrop = document.createElement('canvas'); stageBackdrop.width = W; stageBackdrop.height = H;
     const liveContext = ctx; ctx = stageBackdrop.getContext('2d');
-  // desk background
-  const bg = ctx.createLinearGradient(0, 0, 0, H);
-  bg.addColorStop(0, '#19221c'); bg.addColorStop(0.32, '#19221c'); bg.addColorStop(0.33, '#232f26'); bg.addColorStop(1, '#29362b');
-  ctx.fillStyle = bg; ctx.fillRect(-20, -20, W + 40, H + 40);
-  // faint desk texture dots
-  ctx.fillStyle = 'rgba(255,255,255,.03)';
-  for (let x = 20; x < W; x += 48) for (let y = 220; y < H; y += 34) ctx.fillRect(x, y, 2, 2);
-
-  drawLaptop();
+    drawDesk();
+    drawLaptop();
     ctx = liveContext;
   }
   ctx.drawImage(stageBackdrop, 0, 0);
-  if (S.screen === 'menu') {
-    ctx.save(); ctx.translate(755, 200); ctx.scale(2.2, 2.2); ctx.translate(-480, -(EDGE_Y - 8)); drawPorts(); ctx.restore();
-    ctx.save(); ctx.translate(755, 320); ctx.scale(1.65, 1.65); ctx.translate(-480, -330); drawEnemy(S.enemies[0]); ctx.restore();
-    ctx.fillStyle = '#d6fa72'; ctx.font = '700 11px "Segoe UI",sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText('CONNECTION REFUSED.', 755, 90);
-    ctx.restore(); return;
-  }
+  if (S.screen === 'menu') { drawMenuFigure(); ctx.restore(); return; }
   drawDents();
   if (cfg().movement === 'slots') drawSlots();
   drawBlocker();
@@ -826,61 +909,82 @@ function draw() {
   // telegraph reticle + aim line (on top)
   for (const E of S.enemies) drawTelegraph(E);
 
-  // banner
   if (S.banner) {
-    const a = Math.min(1, S.banner.t * 2);
-    ctx.globalAlpha = a;
-    ctx.font = '900 54px "Segoe UI",system-ui,sans-serif'; ctx.textAlign = 'center';
-    ctx.lineWidth = 8; ctx.strokeStyle = 'rgba(0,0,0,.75)';
+    ctx.globalAlpha = Math.min(1, S.banner.t * 2);
+    ctx.textAlign = 'center'; ctx.lineJoin = 'round';
+    ctx.font = condensed(800, 68);
+    ctx.lineWidth = 10; ctx.strokeStyle = C.desk;
     ctx.strokeText(S.banner.str, W / 2, 300);
-    ctx.fillStyle = '#fff'; ctx.fillText(S.banner.str, W / 2, 300);
+    ctx.fillStyle = C.ink; ctx.fillText(S.banner.str, W / 2, 300);
     if (S.banner.sub) {
-      ctx.font = '700 17px "Segoe UI",system-ui,sans-serif';
-      ctx.lineWidth = 5;
-      ctx.strokeText(S.banner.sub, W / 2, 332);
-      ctx.fillStyle = '#9beaff'; ctx.fillText(S.banner.sub, W / 2, 332);
+      ctx.font = mono(13, 500); ctx.lineWidth = 6;
+      ctx.strokeText(S.banner.sub.toUpperCase(), W / 2, 328);
+      ctx.fillStyle = C.ink2; ctx.fillText(S.banner.sub.toUpperCase(), W / 2, 328);
     }
     ctx.globalAlpha = 1;
   }
-  // red hit flash
-  if (S.flash > 0) { ctx.fillStyle = `rgba(255,60,90,${S.flash * 0.35})`; ctx.fillRect(-20, -20, W + 40, H + 40); }
-
-  // vignette
-  if (!vignette) {
-    vignette = ctx.createRadialGradient(W/2, H/2, 240, W/2, H/2, 560);
-    vignette.addColorStop(0, 'rgba(0,0,0,0)'); vignette.addColorStop(1, 'rgba(0,0,0,.45)');
-  }
-  ctx.fillStyle = vignette; ctx.fillRect(-20, -20, W + 40, H + 40);
+  if (S.flash > 0) { ctx.fillStyle = `rgba(221,74,31,${S.flash * 0.28})`; ctx.fillRect(-20, -20, W + 40, H + 40); }
   ctx.restore();
 }
 
+// Graph paper under the laptop: the desk reads as a drafting table.
+function drawDesk() {
+  ctx.fillStyle = C.desk; ctx.fillRect(-20, -20, W + 40, H + 40);
+  ctx.lineWidth = 1;
+  for (let x = 0; x <= W; x += 24) {
+    ctx.strokeStyle = x % 120 === 0 ? C.gridMajor : C.grid;
+    ctx.beginPath(); ctx.moveTo(x + 0.5, EDGE_Y); ctx.lineTo(x + 0.5, H); ctx.stroke();
+  }
+  for (let y = EDGE_Y + 24, i = 1; y <= H; y += 24, i++) {
+    ctx.strokeStyle = i % 5 === 0 ? C.gridMajor : C.grid;
+    ctx.beginPath(); ctx.moveTo(0, y + 0.5); ctx.lineTo(W, y + 0.5); ctx.stroke();
+  }
+  // contact shadow cast by the laptop onto the desk
+  const sh = ctx.createLinearGradient(0, EDGE_Y + 6, 0, EDGE_Y + 46);
+  sh.addColorStop(0, 'rgba(26,25,22,.22)'); sh.addColorStop(1, 'rgba(26,25,22,0)');
+  ctx.fillStyle = sh; ctx.fillRect(0, EDGE_Y + 6, W, 40);
+}
+
 function drawLaptop() {
-  // slab
   const g = ctx.createLinearGradient(0, 0, 0, EDGE_Y);
-  g.addColorStop(0, '#465247'); g.addColorStop(0.55, '#354136'); g.addColorStop(1, '#242e25');
-  ctx.fillStyle = g;
-  rr(0, -20, W, EDGE_Y + 20, 0); ctx.fill();
-  // lid highlight
-  ctx.fillStyle = 'rgba(255,255,255,.06)'; ctx.fillRect(0, 8, W, 3);
-  // brand dot + text
-  ctx.fillStyle = '#4dd8ff'; ctx.font = '800 15px "Segoe UI",sans-serif'; ctx.textAlign = 'left';
-  ctx.fillText(flavor.brand, 24, 30);
-  ctx.fillStyle = '#8b93b0'; ctx.font = '700 12px "Segoe UI",sans-serif'; ctx.textAlign = 'right';
-  ctx.fillText(flavor.sub, W - 24, 30);
+  g.addColorStop(0, '#3a3935'); g.addColorStop(0.55, C.slab); g.addColorStop(1, '#21201d');
+  ctx.fillStyle = g; ctx.fillRect(0, -20, W, EDGE_Y + 20);
+  ctx.fillStyle = 'rgba(255,255,255,.05)'; ctx.fillRect(0, 8, W, 2);
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = '#b9b3a6'; ctx.font = font(600, 14); ctx.textAlign = 'left';
+  ctx.fillText(flavor.brand, 24, 34);
   if (flavor.dot) { // mac traffic lights, because of course the laptop has them
-    for (const [i, col] of ['#ff5f57', '#febc2e', '#28c840'].entries()) {
-      ctx.fillStyle = col;
-      ctx.beginPath(); ctx.arc(150 + i * 22, 26, 6, 0, Math.PI * 2); ctx.fill();
+    const x0 = 24 + ctx.measureText(flavor.brand).width + 16;
+    for (const [i, col] of ['#c9604c', '#c99a3e', '#5d9358'].entries()) {
+      ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x0 + i * 16, 29, 4.5, 0, Math.PI * 2); ctx.fill();
     }
   }
+  ctx.fillStyle = '#77736a'; ctx.font = mono(11); ctx.textAlign = 'right';
+  ctx.fillText(flavor.sub, W - 24, 34);
   // vent slits
-  ctx.fillStyle = 'rgba(0,0,0,.4)';
-  for (let x = 40; x < W - 40; x += 26) ctx.fillRect(x, EDGE_Y - 34, 12, 5);
-  // edge line (the rail the port lives on) — tinted per OS
-  ctx.fillStyle = '#05070d'; ctx.fillRect(0, EDGE_Y - 4, W, 12);
-  const eg = ctx.createLinearGradient(0, 0, W, 0);
-  eg.addColorStop(0, flavor.edge[0]); eg.addColorStop(0.5, '#ffffff'); eg.addColorStop(1, flavor.edge[1]);
-  ctx.fillStyle = eg; ctx.fillRect(0, EDGE_Y + 7, W, 2);
+  ctx.fillStyle = 'rgba(0,0,0,.32)';
+  for (let x = 40; x < W - 40; x += 20) ctx.fillRect(x, EDGE_Y - 34, 10, 4);
+  // edge lip (the rail the port lives on), with a hairline tinted per OS
+  ctx.fillStyle = '#121110'; ctx.fillRect(0, EDGE_Y - 4, W, 12);
+  ctx.globalAlpha = 0.5; ctx.fillStyle = flavor.edge[0]; ctx.fillRect(0, EDGE_Y + 7, W, 1); ctx.globalAlpha = 1;
+}
+
+// Menu: the right half of the stage is an annotated figure, like a manual plate.
+function drawMenuFigure() {
+  ctx.save(); ctx.translate(755, 200); ctx.scale(2.2, 2.2); ctx.translate(-480, -(EDGE_Y - 8)); drawPorts(); ctx.restore();
+  ctx.save(); ctx.translate(755, 320); ctx.scale(1.65, 1.65); ctx.translate(-480, -330); drawEnemy(S.enemies[0]); ctx.restore();
+  const callout = (x0, x1, y, letter, word) => {
+    ctx.strokeStyle = C.ink; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x0, y + 0.5); ctx.lineTo(x1, y + 0.5); ctx.stroke();
+    ctx.fillStyle = C.ink; ctx.beginPath(); ctx.arc(x0, y + 0.5, 2.5, 0, Math.PI * 2); ctx.fill();
+    ctx.textAlign = 'left';
+    ctx.fillStyle = C.ink3; ctx.font = mono(11); ctx.fillText(letter, x1 + 8, y - 6);
+    ctx.fillStyle = C.ink; ctx.font = condensed(700, 19); ctx.fillText(word, x1 + 8, y + 14);
+  };
+  callout(834, 862, 200, 'A', 'You');
+  callout(797, 872, 356, 'B', 'Machine');
+  ctx.fillStyle = C.ink3; ctx.font = mono(11); ctx.textAlign = 'right';
+  ctx.fillText('FIG. 1', W - 20, H - 18);
 }
 
 function drawSlots() {
@@ -888,27 +992,44 @@ function drawSlots() {
   c.slots.forEach((sx, i) => {
     const occ = S.ports[0].slot === i;
     ctx.save();
-    ctx.setLineDash([7, 6]);
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = occ ? '#4dd8ff' : 'rgba(139,147,176,.55)';
-    ctx.globalAlpha = occ ? 1 : 0.7;
-    rr(sx - 38, EDGE_Y - 22, 76, 34, 6); ctx.stroke();
+    ctx.setLineDash(occ ? [] : [5, 5]);
+    ctx.lineWidth = occ ? 2 : 1.5;
+    ctx.strokeStyle = occ ? '#ece8df' : 'rgba(236,232,223,.32)';
+    rr(sx - 38, EDGE_Y - 22, 76, 34, 3); ctx.stroke();
     ctx.setLineDash([]);
-    if (!occ) {
-      ctx.fillStyle = 'rgba(139,147,176,.8)'; ctx.font = '800 12px "Segoe UI",sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText(String(i + 1), sx, EDGE_Y + 34);
-    }
+    ctx.fillStyle = occ ? C.ink : C.ink3; ctx.font = mono(12, occ ? 600 : 500); ctx.textAlign = 'center';
+    ctx.fillText(String(i + 1), sx, EDGE_Y + 36);
     ctx.restore();
   });
 }
 
 function drawDents() {
   for (const d of S.dents) {
-    ctx.fillStyle = 'rgba(0,0,0,.55)';
-    ctx.beginPath(); ctx.ellipse(d.x, EDGE_Y + 8, 16, 6, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#ff9f1c';
-    ctx.fillRect(d.x - 10, EDGE_Y + 5, 20, 2);
+    ctx.fillStyle = 'rgba(26,25,22,.4)';
+    ctx.beginPath(); ctx.ellipse(d.x, EDGE_Y + 8, 16, 5, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = C.signal;
+    ctx.fillRect(d.x - 10, EDGE_Y + 6, 20, 2);
   }
+}
+
+// Diagonal hazard tape clipped to a box (barricades and seals share it).
+function hazardBox(x, y, w, h, stripe) {
+  ctx.fillStyle = C.ink; rr(x, y, w, h, 3); ctx.fill();
+  ctx.save(); rr(x, y, w, h, 3); ctx.clip();
+  ctx.fillStyle = stripe;
+  for (let sx = x - 40; sx < x + w + 40; sx += 22) {
+    ctx.beginPath();
+    ctx.moveTo(sx, y + h); ctx.lineTo(sx + 11, y + h); ctx.lineTo(sx + 11 + h * 0.5, y); ctx.lineTo(sx + h * 0.5, y);
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+}
+
+function warnOutline(x, y, w, h) {
+  ctx.strokeStyle = C.caution; ctx.lineWidth = 2; ctx.setLineDash([7, 5]);
+  rr(x, y, w, h, 3); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = C.caution; ctx.font = condensed(800, 20); ctx.textAlign = 'center';
+  ctx.fillText('!', x + w / 2, y - 8);
 }
 
 // Territory denial visuals: flashing warning outline, then a solid barricade.
@@ -921,205 +1042,267 @@ function drawBlocker() {
   if (B && B.phase !== 'idle' && c.blocker.kind === 'rail') {
     const l = B.x - B.w / 2;
     if (B.phase === 'warn') {
-      if (blink) {
-        ctx.strokeStyle = '#ffd166'; ctx.lineWidth = 3; ctx.setLineDash([8, 6]);
-        rr(l, EDGE_Y - 28, B.w, 40, 6); ctx.stroke(); ctx.setLineDash([]);
-        ctx.fillStyle = '#ffd166'; ctx.font = '900 20px "Segoe UI",sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText('!', B.x, EDGE_Y - 34);
-      }
+      if (blink) warnOutline(l, EDGE_Y - 28, B.w, 40);
     } else {
-      // striped construction barricade squatting on the edge
-      ctx.fillStyle = '#5a1626'; rr(l, EDGE_Y - 28, B.w, 40, 6); ctx.fill();
-      ctx.save();
-      ctx.beginPath(); rr(l, EDGE_Y - 28, B.w, 40, 6); ctx.clip();
-      ctx.fillStyle = '#ffd166';
-      for (let sx = l - 40; sx < l + B.w + 40; sx += 24) {
-        ctx.beginPath();
-        ctx.moveTo(sx, EDGE_Y + 12); ctx.lineTo(sx + 14, EDGE_Y + 12);
-        ctx.lineTo(sx + 2, EDGE_Y - 28); ctx.lineTo(sx - 12, EDGE_Y - 28);
-        ctx.closePath(); ctx.fill();
-      }
-      ctx.restore();
-      ctx.fillStyle = '#fff'; ctx.font = '900 13px "Segoe UI",sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText('NOPE', B.x, EDGE_Y - 32);
+      hazardBox(l, EDGE_Y - 28, B.w, 40, C.caution);
+      ctx.fillStyle = C.caution; ctx.font = mono(11, 600); ctx.textAlign = 'center';
+      ctx.fillText('NO ENTRY', B.x, EDGE_Y - 36);
     }
   } else if (B && B.phase !== 'idle') {
-    // seized slot: warn flashes, solid paints a red X over the outline
+    // seized slot: warn flashes, solid lays hazard tape over the slot
     const sx = c.slots[B.slot];
     if (sx == null) { ctx.restore(); return; }
     if (B.phase === 'warn') {
-      if (blink) {
-        ctx.strokeStyle = '#ffd166'; ctx.lineWidth = 3; ctx.setLineDash([8, 6]);
-        rr(sx - 38, EDGE_Y - 22, 76, 34, 6); ctx.stroke(); ctx.setLineDash([]);
-        ctx.fillStyle = '#ffd166'; ctx.font = '900 18px "Segoe UI",sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText('!', sx, EDGE_Y - 30);
-      }
+      if (blink) warnOutline(sx - 38, EDGE_Y - 22, 76, 34);
     } else {
-      ctx.fillStyle = 'rgba(90,22,38,.85)'; rr(sx - 38, EDGE_Y - 22, 76, 34, 6); ctx.fill();
-      ctx.strokeStyle = '#ff5470'; ctx.lineWidth = 5;
-      ctx.beginPath(); ctx.moveTo(sx - 22, EDGE_Y - 14); ctx.lineTo(sx + 22, EDGE_Y + 4);
-      ctx.moveTo(sx + 22, EDGE_Y - 14); ctx.lineTo(sx - 22, EDGE_Y + 4); ctx.stroke();
+      hazardBox(sx - 38, EDGE_Y - 22, 76, 34, C.signal);
     }
   }
   // permanent seals: stuck plugs squatting on slots for the whole run
   if (c.movement === 'slots') {
-    ctx.fillStyle = 'rgba(90,22,38,.85)';
-    ctx.strokeStyle = '#ff9f1c'; ctx.lineWidth = 5;
     for (const i of S.sealed) {
       const sx = c.slots[i];
       if (sx == null) continue;
-      rr(sx - 38, EDGE_Y - 22, 76, 34, 6); ctx.fill();
-      ctx.beginPath(); ctx.moveTo(sx - 22, EDGE_Y - 14); ctx.lineTo(sx + 22, EDGE_Y + 4);
-      ctx.moveTo(sx + 22, EDGE_Y - 14); ctx.lineTo(sx - 22, EDGE_Y + 4); ctx.stroke();
-      // stub of the plug that claimed it
-      ctx.fillStyle = '#c7cede'; ctx.fillRect(sx - 14, EDGE_Y - 30, 28, 8);
-      ctx.fillStyle = 'rgba(90,22,38,.85)';
+      hazardBox(sx - 38, EDGE_Y - 22, 76, 34, '#4a4842');
+      ctx.fillStyle = '#c7c3b8'; ctx.fillRect(sx - 14, EDGE_Y - 30, 28, 8); // stub of the plug that claimed it
     }
   }
   // Seal Team (free slide): sealed stretches claim each end of the edge, so the
   // shrinking lane is unmistakable — teeth of the plug run along the whole chunk
   if (c.movement === 'free' && c.sealTide && S.sealed.length) {
-    ctx.strokeStyle = '#ff9f1c'; ctx.lineWidth = 4;
     for (const s of S.sealed) {
       const x = s.side < 0 ? c.rail.min : c.rail.max - s.w;
-      ctx.fillStyle = 'rgba(90,22,38,.92)';
-      rr(x, EDGE_Y - 22, s.w, 34, 6); ctx.fill(); ctx.stroke();
-      ctx.fillStyle = '#c7cede';
+      hazardBox(x, EDGE_Y - 22, s.w, 34, '#4a4842');
+      ctx.strokeStyle = C.caution; ctx.lineWidth = 2; rr(x, EDGE_Y - 22, s.w, 34, 3); ctx.stroke();
+      ctx.fillStyle = '#c7c3b8';
       for (let px = x + 5; px + 12 <= x + s.w; px += 22) ctx.fillRect(px, EDGE_Y - 30, 12, 8);
     }
-    ctx.fillStyle = '#ff9f1c'; ctx.font = '900 12px "Segoe UI",sans-serif'; ctx.textAlign = 'center';
+    ctx.fillStyle = C.caution; ctx.font = mono(11, 600); ctx.textAlign = 'center';
     const r = sealRail(c.rail, S.sealed);
-    ctx.fillText('SEALED', c.rail.min + (r.min - c.rail.min) / 2, EDGE_Y - 40);
+    if (r.min > c.rail.min) ctx.fillText('SEALED', c.rail.min + (r.min - c.rail.min) / 2, EDGE_Y - 40);
     if (r.max < c.rail.max) ctx.fillText('SEALED', r.max + (c.rail.max - r.max) / 2, EDGE_Y - 40);
   }
   ctx.restore();
+}
+
+// Line-art helper: fill, optional right-side shade band, ink outline.
+function inked(x, y, w, h, r, fill, shade, shadeFrac = 0.28) {
+  rr(x, y, w, h, r);
+  ctx.fillStyle = fill; ctx.fill();
+  if (shade) {
+    ctx.save(); ctx.clip();
+    ctx.fillStyle = shade; ctx.fillRect(x + w * (1 - shadeFrac), y, w * shadeFrac + 1, h);
+    ctx.restore();
+  }
+  ctx.strokeStyle = C.ink; ctx.lineWidth = 1.5; ctx.stroke();
+}
+
+// Printed caution sign (amber triangle, ink "!"), used for corpse-walls.
+function cautionSign(x, y, size) {
+  ctx.beginPath();
+  ctx.moveTo(x, y - size * 0.55); ctx.lineTo(x + size * 0.6, y + size * 0.45); ctx.lineTo(x - size * 0.6, y + size * 0.45);
+  ctx.closePath();
+  ctx.fillStyle = C.caution; ctx.fill();
+  ctx.strokeStyle = C.ink; ctx.lineWidth = 1.5; ctx.lineJoin = 'round'; ctx.stroke();
+  ctx.fillStyle = C.ink;
+  ctx.fillRect(x - 1, y - size * 0.22, 2, size * 0.36);
+  ctx.fillRect(x - 1, y + size * 0.22, 2, 2);
+}
+
+// The port's face lives in the socket cavity. Eyes are big on purpose:
+// at 66x26 they are the only way the port can emote.
+function drawPortFace(px, py, p, locking) {
+  const mood = p.mood?.kind || (locking ? 'scared' : 'calm');
+  const look = Math.max(-2, Math.min(2, (p.face || p.vx || 0) / 220));
+  const eyeY = py + 11, r = mood === 'scared' ? 6.4 : 6;
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  for (const side of [-1, 1]) {
+    const ex = px + side * 11;
+    if (mood === 'relief') {
+      // ^ ^ closed, pleased
+      ctx.strokeStyle = '#f3f1e6'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(ex, eyeY + 2.5, 4.2, Math.PI * 1.15, Math.PI * 1.85); ctx.stroke();
+      continue;
+    }
+    if (mood === 'wince') {
+      // > <  squeezed shut
+      ctx.strokeStyle = '#f3f1e6'; ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(ex - side * 4, eyeY - 4); ctx.lineTo(ex + side * 3, eyeY); ctx.lineTo(ex - side * 4, eyeY + 4);
+      ctx.stroke();
+      continue;
+    }
+    ctx.fillStyle = '#f3f1e6';
+    ctx.beginPath(); ctx.arc(ex, eyeY, r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = C.ink; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.fillStyle = C.ink;
+    ctx.beginPath(); ctx.arc(ex + look, eyeY + 0.5, mood === 'scared' ? 1.6 : 2.7, 0, Math.PI * 2); ctx.fill();
+    if (mood === 'strain') {
+      // heavy lids pressed halfway down, angled toward the middle
+      ctx.fillStyle = '#141412';
+      ctx.beginPath();
+      ctx.moveTo(ex - r - 1, eyeY - r - 1); ctx.lineTo(ex + r + 1, eyeY - r - 1);
+      ctx.lineTo(ex + r + 1, eyeY + (side > 0 ? -1 : 1)); ctx.lineTo(ex - r - 1, eyeY + (side > 0 ? 1 : -1));
+      ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = '#f3f1e6'; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(ex - r, eyeY + (side > 0 ? 1 : -1)); ctx.lineTo(ex + r, eyeY + (side > 0 ? -1 : 1)); ctx.stroke();
+    }
+  }
+  // mouth, tucked between the eyes above the contact tongue
+  ctx.strokeStyle = '#d9d5c9'; ctx.lineWidth = 1.3;
+  ctx.beginPath();
+  if (mood === 'relief') { ctx.moveTo(px - 3.5, py + 13); ctx.quadraticCurveTo(px, py + 17.5, px + 3.5, py + 13); }
+  else if (mood === 'wince') { ctx.moveTo(px - 3.5, py + 15); ctx.lineTo(px - 1.2, py + 13.5); ctx.lineTo(px + 1.2, py + 15); ctx.lineTo(px + 3.5, py + 13.5); }
+  else if (mood === 'strain') { ctx.moveTo(px - 3.5, py + 14.5); ctx.lineTo(px + 3.5, py + 14.5); }
+  else if (mood === 'scared') { ctx.arc(px, py + 14.5, 1.6, 0, Math.PI * 2); }
+  else { ctx.moveTo(px - 2.2, py + 14); ctx.quadraticCurveTo(px, py + 15.8, px + 2.2, py + 14); }
+  ctx.stroke();
+}
+
+// A plugged port: the plug is seated, its cable drops to the desk and becomes
+// a wall the surviving port cannot cross (see applyDeadWalls).
+function drawDeadPort(px, py, p) {
+  // cable first, so the plug body sits on top of it
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = C.ink; ctx.lineWidth = 11;
+  ctx.beginPath(); ctx.moveTo(px, py + p.h + 30);
+  ctx.bezierCurveTo(px + 8, py + p.h + 120, px - 10, H - 120, px - 2, H + 20); ctx.stroke();
+  ctx.strokeStyle = '#3a3833'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(px - 2, py + p.h + 32);
+  ctx.bezierCurveTo(px + 6, py + p.h + 120, px - 12, H - 120, px - 4, H + 20); ctx.stroke();
+  drawUSBPort(ctx, px, py, p.w, p.h, false);
+  // the plug's steel fills the cavity: nobody home
+  inked(px - p.w / 2 + 4, py + 4.5, p.w - 8, p.h - 8, 2, '#c9ccc5', '#a2a69f', 0.28);
+  ctx.fillStyle = C.ink;
+  ctx.fillRect(px - p.w * 0.25, py + 9, p.w * 0.14, 6); ctx.fillRect(px + p.w * 0.11, py + 9, p.w * 0.14, 6);
+  // plug body hanging under the socket, signal shoulder on top
+  inked(px - 23, py + p.h + 1, 46, 30, [2, 2, 7, 7], '#35342f', '#272622', 0.25);
+  ctx.fillStyle = C.signal; ctx.fillRect(px - 22.25, py + p.h + 1.75, 44.5, 4.5);
+  cautionSign(px, py - 15, 15);
 }
 
 function drawPorts() {
   for (const p of S.ports) {
     const px = p.alive ? p.x : (p.stuckX ?? p.x);
     const py = EDGE_Y - 22;
+    if (!p.alive) { ctx.save(); drawDeadPort(px, py, p); ctx.restore(); continue; }
     const sq = p.squash || 0;
     const wob = 1 + sq * 0.12, hob = 1 - sq * 0.08;
-    // phase-out blink while invulnerable
     ctx.save();
-    if (p.alive && S.invuln > 0 && Math.floor(S.invuln * 12) % 2 === 0) ctx.globalAlpha = 0.35;
+    // phase-out blink while invulnerable
+    if (S.invuln > 0 && Math.floor(S.invuln * 12) % 2 === 0) ctx.globalAlpha = 0.35;
     // FLIP-FLOP extra life: the whole port hangs upside-down (tongue on top,
     // face derpy) until it absorbs a plug
-    const flipped = p.alive && S.flipLife;
+    const flipped = S.flipLife;
     ctx.translate(px, py + p.h / 2);
     ctx.scale(wob, hob);
     if (flipped) ctx.rotate(Math.PI);
     ctx.translate(-px, -(py + p.h / 2));
-    if (!p.alive) {
-      // plugged: dead socket + stuck plug stub + cable.
-      // The hanging cable is a WALL — survivors can't cross it (see applyDeadWalls),
-      // so mark it with hazard chevrons on the laptop edge.
-      drawUSBPort(ctx, px, py, p.w, p.h, false);
-      ctx.fillStyle = '#c7cede'; ctx.fillRect(px - 20, py - 2, 40, 10); // stuck shell
-      ctx.fillStyle = '#ff5470'; ctx.fillRect(px - 20, py + 8, 40, 12);
-      ctx.strokeStyle = '#ff5470'; ctx.lineWidth = 4;
-      ctx.beginPath(); ctx.moveTo(px - 28, py - 12); ctx.lineTo(px + 28, py + p.h + 8);
-      ctx.moveTo(px + 28, py - 12); ctx.lineTo(px - 28, py + p.h + 8); ctx.stroke();
-      ctx.fillStyle = '#05070d'; ctx.fillRect(px - 6, py + p.h, 12, 44); // cable down = the wall
-      ctx.fillStyle = '#ffd166'; // hazard chevrons on the edge
-      for (const cx of [px - 30, px - 10, px + 10]) {
-        ctx.beginPath();
-        ctx.moveTo(cx, EDGE_Y + 4); ctx.lineTo(cx + 10, EDGE_Y + 4);
-        ctx.lineTo(cx + 6, EDGE_Y + 9); ctx.lineTo(cx - 4, EDGE_Y + 9);
-        ctx.closePath(); ctx.fill();
-      }
-      ctx.restore();
-      continue;
-    }
     drawUSBPort(ctx, px, py, p.w, p.h);
-    const locking = S.enemies.some(E => E.state === 'lock');
-    // Fixed eye sockets, directional pupils: curious at rest, wide-eyed at lock.
-    const look = Math.max(-1.8, Math.min(1.8, (p.face || p.vx || 0) / 240));
-    const eyeY = py + 10, radius = locking ? 5.2 : 4.8;
-    for (const eyeX of [px - 9, px + 9]) {
-      ctx.fillStyle = '#030c07';
-      ctx.beginPath(); ctx.arc(eyeX, eyeY + .7, radius + .8, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#f3f5df';
-      ctx.beginPath(); ctx.arc(eyeX, eyeY, radius, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#123322';
-      ctx.beginPath(); ctx.arc(eyeX + look, eyeY + .4, locking ? 1.7 : 2.5, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath(); ctx.arc(eyeX + look - .6, eyeY - .5, .8, 0, Math.PI * 2); ctx.fill();
-    }
-    // A small expression sits above the contacts without obscuring the hardware.
-    ctx.strokeStyle = '#a7d3b2'; ctx.lineWidth = 1.2; ctx.lineCap = 'round';
-    ctx.beginPath();
-    if (locking) {
-      ctx.moveTo(px - 2, py + 15); ctx.quadraticCurveTo(px, py + 13, px + 2, py + 15);
-    } else {
-      ctx.moveTo(px - 2, py + 14); ctx.quadraticCurveTo(px, py + 16, px + 2, py + 14);
-    }
-    ctx.stroke();
-    // "YOU" tag + flip-life badge stay upright even when the port hangs upside-down
+    drawPortFace(px, py, p, S.enemies.some(E => E.state === 'lock'));
     ctx.restore();
-    if (p.alive) {
-      ctx.fillStyle = '#d6fa72'; ctx.font = '900 11px "Segoe UI",sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText(flipped ? '⟲ YOU ⟲' : '◀ YOU ▶', px, py - 8);
-    }
+    // "YOU" tag stays upright even when the port hangs upside-down
+    ctx.fillStyle = '#e4dfd2'; ctx.font = mono(10, 600); ctx.textAlign = 'center';
+    ctx.fillText(flipped ? 'YOU (FLIPPED)' : 'YOU', px, py - 9);
   }
+}
+
+// The attacker is an industrial arm: two jaws clamp the plug body, a carriage
+// and wrist sit under it, and the arm runs off-frame from a pivot joint.
+// Bruisers are heavy yellow clamps; jabbers are slim grey pick-and-place units.
+const ARM = {
+  a: { jaw: 15, arm: 38, bolts: true },
+  c: { jaw: 7, arm: 24, bolts: false },
+  base: { jaw: 11, arm: 30, bolts: true },
+};
+
+function bolt(x, y, r = 2.6) {
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fillStyle = '#8f8b80'; ctx.fill();
+  ctx.strokeStyle = C.ink; ctx.lineWidth = 1; ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x - r * 0.6, y); ctx.lineTo(x + r * 0.6, y); ctx.stroke();
 }
 
 function drawEnemy(E) {
   const c = cfg();
   const ep = E.ep || c.enemy;
-  const plugW = ep.plugW, plugH = 64;
+  const plugW = ep.plugW;
   const tipX = E.x, tipY = E.tipY;
   const urgency = E.state === 'lock' ? (1 - E.t / ep.lockTime) : 0;
+  // servo jitter while locked: the arm strains against its own brakes
+  const trem = E.state === 'lock' && !motionPreference.matches ? Math.sin(performance.now() / 30) * (1.5 + urgency * 3.5) : 0;
+  const hx = tipX + trem;
+  const kit = ARM[ep.plug] || ARM.base;
+  const paint = E.paint, shade = 'rgba(0,0,0,.18)';
+  const isC = ep.plug === 'c';
+  // plug body extents (from usb-art), so the jaws close exactly on it
+  const bodyTop = tipY + (isC ? 46 : 58), bodyBot = tipY + (isC ? 110 : 114);
+  const bodyHalf = plugW / 2 + (isC ? 4 : 5);
+  const carriageY = bodyBot - 6, wristY = carriageY + 16, pivotY = wristY + 36;
 
   ctx.save();
-  // cable (thick, from bottom of screen up into the fist)
-  const handY = tipY + 44;
-  ctx.strokeStyle = '#05070d'; ctx.lineWidth = 22; ctx.lineCap = 'round';
-  ctx.beginPath(); ctx.moveTo(tipX + 46, H + 20); ctx.quadraticCurveTo(tipX + 40, handY + 190, tipX + 6, handY + 110); ctx.stroke();
-  ctx.strokeStyle = '#232a44'; ctx.lineWidth = 6;
-  ctx.beginPath(); ctx.moveTo(tipX + 46, H + 20); ctx.quadraticCurveTo(tipX + 40, handY + 190, tipX + 6, handY + 110); ctx.stroke();
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  // the plug's own cable, fed out the side of the carriage and off-frame
+  ctx.strokeStyle = C.ink; ctx.lineWidth = 10;
+  ctx.beginPath(); ctx.moveTo(hx + 6, carriageY + 10); ctx.bezierCurveTo(hx + 50, carriageY + 24, hx + 62, pivotY + 40, hx + 74, H + 30); ctx.stroke();
+  ctx.strokeStyle = '#3a3833'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(hx + 6, carriageY + 10); ctx.bezierCurveTo(hx + 50, carriageY + 24, hx + 62, pivotY + 40, hx + 74, H + 30); ctx.stroke();
 
-  const trem = E.state === 'lock' && !motionPreference.matches ? Math.sin(performance.now() / 30) * (2 + urgency * 4) : 0;
-  const hx = tipX + trem;
+  // arm segment, with a hydraulic ram alongside and the plug type stencilled on
+  const aw = kit.arm;
+  inked(hx - aw / 2, pivotY, aw, H + 30 - pivotY, 6, paint, shade, 0.3);
+  if (!isC) {
+    inked(hx - aw / 2 - 12, pivotY + 18, 8, H + 30 - pivotY, 3, '#bcbab2', '#9a978e', 0.4);
+    inked(hx - aw / 2 - 13, pivotY + 60, 10, H + 30 - pivotY, 2, '#55524b');
+  }
+  if (ep.plug) {
+    ctx.fillStyle = 'rgba(26,25,22,.75)'; ctx.font = mono(10, 600); ctx.textAlign = 'center';
+    ctx.save(); ctx.translate(hx + 1, pivotY + 58); ctx.rotate(-Math.PI / 2);
+    ctx.fillText(isC ? 'USB-C' : 'USB-A', 0, 3.5);
+    ctx.restore();
+  }
+  // pivot joint
+  ctx.beginPath(); ctx.arc(hx, pivotY, aw / 2 + 4, 0, Math.PI * 2);
+  ctx.fillStyle = paint; ctx.fill(); ctx.strokeStyle = C.ink; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.beginPath(); ctx.arc(hx, pivotY, aw / 4, 0, Math.PI * 2);
+  ctx.fillStyle = '#35342f'; ctx.fill(); ctx.stroke();
+  bolt(hx, pivotY, 2.4);
 
-  // --- hand (big threatening mitt gripping the plug; sleeve exits frame bottom) ---
-  ctx.fillStyle = '#caa07a'; // wrist
-  ctx.fillRect(hx - 62, handY + 78, 124, 60);
-  ctx.fillStyle = E.sleeve || '#31405f'; ctx.fillRect(hx - 62, handY + 118, 124, 60);
-  const skin = E.state === 'strike' || E.state === 'impact' ? '#e8b88a' : '#dfa878';
-  const fist = (fw, fh) => { rr(hx - fw/2, handY, fw, fh, 26); ctx.fill(); };
-  ctx.fillStyle = skin;
-  fist(124, 96); // palm
-  // fingers wrapped around plug
-  rr(hx - 66, handY + 6, 26, 70, 12); ctx.fill();
-  rr(hx + 40, handY + 6, 26, 70, 12); ctx.fill();
-  // thumb
-  ctx.save(); ctx.translate(hx - 52, handY + 30); ctx.rotate(-0.5);
-  rr(-14, -34, 30, 66, 14); ctx.fill(); ctx.restore();
-  // knuckle shading + finger grooves
-  ctx.fillStyle = 'rgba(120,70,40,.35)';
-  for (let i = -1; i <= 1; i++) { ctx.beginPath(); ctx.arc(hx + i * 30, handY + 18, 5, 0, Math.PI * 2); ctx.fill(); }
-  ctx.strokeStyle = 'rgba(120,70,40,.5)'; ctx.lineWidth = 3;
-  for (const gx of [hx - 15, hx + 15]) {
-    ctx.beginPath(); ctx.moveTo(gx, handY + 34); ctx.lineTo(gx, handY + 88); ctx.stroke();
+  // wrist block, narrower than the carriage
+  inked(hx - 20, wristY - 2, 40, pivotY - wristY + 2, 4, '#35342f', '#272622', 0.3);
+  if (isC) { // jabbers carry a status light
+    ctx.beginPath(); ctx.arc(hx + 11, wristY + 9, 2.6, 0, Math.PI * 2);
+    ctx.fillStyle = C.caution; ctx.fill(); ctx.strokeStyle = C.ink; ctx.lineWidth = 1; ctx.stroke();
   }
 
-  // --- USB-A plug pointing UP at the laptop ---
-  const pw = plugW, ph = plugH;
-  const py = tipY;
-  // speed lines on strike (at the sides so the fist stays readable)
+  // speed lines on strike (at the sides so the gripper stays readable)
   if (E.state === 'strike') {
-    ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.lineWidth = 3;
-    for (const sx of [hx - pw / 2 - 22, hx + pw / 2 + 22]) {
-      ctx.beginPath(); ctx.moveTo(sx, py + ph + 120); ctx.lineTo(sx, py + ph + 40); ctx.stroke();
+    ctx.strokeStyle = 'rgba(26,25,22,.4)'; ctx.lineWidth = 2;
+    for (const sx of [hx - bodyHalf - kit.jaw - 18, hx + bodyHalf + kit.jaw + 18]) {
+      ctx.beginPath(); ctx.moveTo(sx, tipY + 70); ctx.lineTo(sx, tipY - 6); ctx.stroke();
     }
   }
-  drawUSBStick(ctx, hx, py, pw, E.sleeve === '#5f313d' ? '#ed9b83' : '#d6fa72');
+  (isC ? drawUSBCStick : drawUSBStick)(ctx, hx, tipY, plugW, E.accent);
 
-  // angry brows on the fist? no — keep readable. Danger ring instead:
+  // carriage: the rail both jaws ride on
+  const reach = bodyHalf + kit.jaw + 4;
+  inked(hx - reach, carriageY, reach * 2, 16, 3, paint, shade, 0.3);
+  ctx.strokeStyle = 'rgba(26,25,22,.45)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(hx - reach + 5, carriageY + 8); ctx.lineTo(hx + reach - 5, carriageY + 8); ctx.stroke();
+  // jaws, closed on the plug body, with grip pads on their inner faces
+  const jawTop = bodyTop + 6;
+  for (const side of [-1, 1]) {
+    const inner = hx + side * bodyHalf;
+    const x = side < 0 ? inner - kit.jaw : inner;
+    inked(x, jawTop, kit.jaw, carriageY - jawTop + 4, [3, 3, 1, 1], paint, shade, 0.3);
+    ctx.fillStyle = C.ink;
+    for (let y = jawTop + 6; y < carriageY - 4; y += 6) ctx.fillRect(side < 0 ? inner - 3 : inner, y, 3, 2);
+    if (kit.bolts) { bolt(x + kit.jaw / 2 + side, jawTop + 9); bolt(x + kit.jaw / 2 + side, carriageY - 6); }
+  }
+
+  // tracking: a dashed ring says "it's looking for you", without claiming a target yet
   if (E.state === 'track') {
-    ctx.strokeStyle = 'rgba(255,209,102,.7)'; ctx.lineWidth = 2; ctx.setLineDash([6, 6]);
+    ctx.strokeStyle = 'rgba(26,25,22,.4)'; ctx.lineWidth = 1.5; ctx.setLineDash([5, 6]);
     ctx.beginPath(); ctx.arc(hx, tipY + 30, 56, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
   }
   ctx.restore();
@@ -1130,29 +1313,30 @@ function drawTelegraph(E) {
   if (E.state === 'lock' && E.blackout) return; // crosshair cut out — read the hand, not the marker
   const tx = E.lockedX;
   const pulse = motionPreference.matches ? 0.5 : 0.5 + 0.5 * Math.sin(performance.now() / 90);
+  ctx.save();
   if (E.state === 'lock') {
-    // dotted aim line plug -> target
-    ctx.save();
-    ctx.strokeStyle = `rgba(255,84,112,${0.45 + pulse * 0.4})`;
-    ctx.lineWidth = 3; ctx.setLineDash([8, 8]);
+    // dashed aim line plug -> target
+    ctx.strokeStyle = `rgba(221,74,31,${0.5 + pulse * 0.4})`;
+    ctx.lineWidth = 2.5; ctx.setLineDash([7, 7]);
     ctx.beginPath(); ctx.moveTo(E.x, E.tipY - 6); ctx.lineTo(tx, EDGE_Y - 26); ctx.stroke();
     ctx.setLineDash([]);
     // reticle on the edge
-    ctx.strokeStyle = '#ff5470'; ctx.lineWidth = 3;
-    const r = 26 + pulse * 8;
+    ctx.strokeStyle = C.signal; ctx.lineWidth = 3;
+    // the ring matches this plug's real width, so a USB-C lock looks as tight as it is
+    const r = ((E.ep || cfg().enemy).plugW * 0.5 + 2) + pulse * 6;
     ctx.beginPath(); ctx.arc(tx, EDGE_Y - 8, r, 0, Math.PI * 2); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(tx - r - 8, EDGE_Y - 8); ctx.lineTo(tx - r + 4, EDGE_Y - 8);
     ctx.moveTo(tx + r - 4, EDGE_Y - 8); ctx.lineTo(tx + r + 8, EDGE_Y - 8); ctx.stroke();
-    ctx.fillStyle = '#ff5470'; ctx.font = '900 20px "Segoe UI",sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText('▼', tx, EDGE_Y - 44 - pulse * 6);
-    ctx.restore();
+    // arrowhead over the target
+    const ay = EDGE_Y - 46 - pulse * 6;
+    ctx.fillStyle = C.signal;
+    ctx.beginPath(); ctx.moveTo(tx - 8, ay - 10); ctx.lineTo(tx + 8, ay - 10); ctx.lineTo(tx, ay); ctx.closePath(); ctx.fill();
   } else {
     // strike: solid fast line
-    ctx.save();
-    ctx.strokeStyle = 'rgba(255,84,112,.9)'; ctx.lineWidth = 4;
+    ctx.strokeStyle = C.signal; ctx.lineWidth = 4;
     ctx.beginPath(); ctx.moveTo(E.x, E.tipY - 6); ctx.lineTo(tx, EDGE_Y - 10); ctx.stroke();
-    ctx.restore();
   }
+  ctx.restore();
 }
 
 // ---------- main loop ----------
@@ -1259,8 +1443,8 @@ function runFrame(now, elapsed) {
         if (trim) {
           S.sealed.push(trim);
           const edgeX = trim.side < 0 ? sealRail(qc.rail, S.sealed).min : sealRail(qc.rail, S.sealed).max;
-          fx.text(edgeX, EDGE_Y - 64, 'EDGE SEALED!', '#ff9f1c', 22, 1.0);
-          fx.burst(edgeX, EDGE_Y - 10, 14, { colors: ['#ff9f1c', '#ff5470'], speed: 190, ttl: 0.5, size: 3 });
+          fx.text(edgeX, EDGE_Y - 64, 'EDGE SEALED', C.caution, 22, 1.0);
+          fx.burst(edgeX, EDGE_Y - 10, 14, { colors: [C.caution, C.signal], speed: 190, ttl: 0.5, size: 3 });
           fx.addShake(8); S.flash = Math.max(S.flash, 0.22);
           sfx.bump();
           updateHud();
@@ -1372,7 +1556,7 @@ if (QS.get('endless') === '1') {
   }
 } else if (QS.get('play') === '1' || BOT) {
   resetLevel(startLevel); hide(); S.screen = 'playing';
-  S.banner = { str: 'DODGE!', sub: '', t: 0.9 };
+  S.banner = { str: 'DODGE', sub: '', t: 0.9 };
   hud.classList.remove('hidden');
   const deadParam = parseInt(QS.get('dead') || '-1', 10);
   if (deadParam >= 0 && S.ports[deadParam]) {
@@ -1388,7 +1572,7 @@ if (QS.get('endless') === '1') {
     for (const p of S.ports) { p.alive = false; p.stuckX = p.x; }
     S.elapsed = 12.3; S.enemies[0].tipY = contactTipY(); showEnd(false);
   } else if (QS.get('end') === 'win') {
-    S.misses = cfg().missesToWin; S.elapsed = 24.5; S.score = S.misses * SCORE.MISS; awardLevelClear(); showEnd(true);
+    S.misses = cfg().missesToWin ?? 8; S.elapsed = 24.5; S.score = S.misses * SCORE.MISS; awardLevelClear(); showEnd(true);
   }
 } else {
   showMenu();

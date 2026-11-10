@@ -1,4 +1,11 @@
 // Particles, floating texts, screen shake, hitstop.
+
+// Dark ink on light chips, paper on dark ones.
+function inkOn(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return ((n >> 16) * 0.299 + ((n >> 8) & 255) * 0.587 + (n & 255) * 0.114) > 150 ? '#1a1916' : '#f4f1ea';
+}
+
 export function createFX(reduceMotion = () => false) {
   const parts = [];
   const texts = [];
@@ -13,16 +20,16 @@ export function createFX(reduceMotion = () => false) {
         x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - (opts.up || 0),
         life: 0, ttl: (opts.ttl || 0.6) * (0.6 + Math.random() * 0.8),
         size: (opts.size || 4) * (0.6 + Math.random() * 0.8),
-        color: opts.colors ? opts.colors[(Math.random() * opts.colors.length) | 0] : '#ffd166',
+        color: opts.colors ? opts.colors[(Math.random() * opts.colors.length) | 0] : '#e2a72e',
         grav: opts.grav ?? 900,
       });
     }
   }
-  const sparks = (x, y) => burst(x, y, 26, { colors: ['#ffd166', '#ff9f1c', '#ffffff', '#4dd8ff'], speed: 340, up: 120 });
-  const poof = (x, y) => burst(x, y, 14, { colors: ['#4dd8ff', '#b8f1ff', '#ffffff'], speed: 200, grav: 200, ttl: 0.45, size: 5 });
-  const debris = (x, y) => burst(x, y, 20, { colors: ['#3a4358', '#59617c', '#ff5470'], speed: 300, up: 60 });
+  const sparks = (x, y) => burst(x, y, 26, { colors: ['#e2a72e', '#dd4a1f', '#1a1916', '#f4f1ea'], speed: 340, up: 120 });
+  const poof = (x, y) => burst(x, y, 14, { colors: ['#8a867c', '#c9c3b6', '#1a1916'], speed: 200, grav: 200, ttl: 0.45, size: 5 });
+  const debris = (x, y) => burst(x, y, 20, { colors: ['#2b2a27', '#55524b', '#dd4a1f'], speed: 300, up: 60 });
 
-  function text(x, y, str, color = '#fff', size = 22, ttl = 0.9) {
+  function text(x, y, str, color = '#1a1916', size = 22, ttl = 0.9) {
     texts.push({ x, y, str, color, size, life: 0, ttl });
   }
 
@@ -58,14 +65,17 @@ export function createFX(reduceMotion = () => false) {
       ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
     }
     ctx.globalAlpha = 1;
+    // Floating callouts are printed labels: a solid chip, so they read on the
+    // dark laptop and the pale desk alike.
     for (const t of texts) {
-      const a = 1 - t.life / t.ttl;
-      ctx.globalAlpha = Math.max(0, a);
-      ctx.font = `900 ${t.size}px "Segoe UI",system-ui,sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.7)';
-      ctx.strokeText(t.str, t.x, t.y);
+      ctx.globalAlpha = Math.max(0, 1 - t.life / t.ttl);
+      const size = Math.round(t.size * 0.8);
+      ctx.font = `800 condensed ${size}px Archivo, "Arial Narrow", Arial, sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+      const w = ctx.measureText(t.str).width + 16, cap = size * 0.72;
       ctx.fillStyle = t.color;
+      ctx.fillRect(t.x - w / 2, t.y - cap - 6, w, cap + 12);
+      ctx.fillStyle = inkOn(t.color);
       ctx.fillText(t.str, t.x, t.y);
     }
     ctx.globalAlpha = 1;

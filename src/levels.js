@@ -2,7 +2,7 @@
 // movement: 'free' | 'slots' | 'duo' (duo = 2 ports, shared command)
 export const LEVELS = [
   {
-    id: 1, name: 'FIRST BOOT', sub: 'free movement — outrun the hand',
+    id: 1, name: 'FIRST BOOT', sub: 'One slow arm and long warnings. Learn the rhythm.',
     movement: 'free',
     time: 30, missesToWin: 5,
     rail: { min: 90, max: 870 },
@@ -13,7 +13,7 @@ export const LEVELS = [
     slots: [160, 320, 480, 640, 800],
   },
   {
-    id: 2, name: 'CORNERED', sub: 'teleport between port slots — Q/E or ←/→ or tap',
+    id: 2, name: 'CORNERED', sub: 'No more sliding. You live in the slots now.',
     movement: 'slots',
     time: 32, missesToWin: 7,
     rail: { min: 90, max: 870 },
@@ -24,7 +24,7 @@ export const LEVELS = [
     slots: [150, 305, 480, 655, 810],
   },
   {
-    id: 3, name: 'DOUBLE TROUBLE', sub: 'experiment: two ports, one command — keep at least one alive',
+    id: 3, name: 'DOUBLE TROUBLE', sub: 'Two ports on one command. Keep at least one of them alive.',
     movement: 'duo',
     time: 40, missesToWin: 8,
     rail: { min: 90, max: 870 },
@@ -35,7 +35,7 @@ export const LEVELS = [
     slots: [160, 320, 480, 640, 800],
   },
   {
-    id: 4, name: 'TWO HANDS', sub: 'two ports, two humans — lose one and BOTH hands hunt the survivor',
+    id: 4, name: 'TWO ARMS', sub: 'Two ports against two machines. Lose one and both arms come for the other.',
     movement: 'duo',
     time: 25, timeOnly: true,
     rail: { min: 90, max: 870 },
@@ -43,14 +43,14 @@ export const LEVELS = [
     enemy: { trackTime: 0.95, lockTime: 0.62, strikeTime: 0.18, recoverTime: 0.62,
              trackSpeed: 450, lead: 0.3, plugW: 56, startDelay: 0.8, doubles: 0.25 },
     hands: [
-      { startDelay: 0.8 },
-      { startDelay: 2.4, trackSpeed: 420, lockTime: 0.7 }, // second human: later, lazier, harder to bait both at once
+      { startDelay: 0.8, plug: 'a' }, // bruiser: slow, honest wind-up, one strike at a time
+      { startDelay: 2.4, plug: 'c' }, // jabber: narrow plug, quick warning, joins late
     ],
     blocker: { kind: 'rail', frac: 0.2, warn: 1.0, dur: 4.5, gap: 5 },
     slots: [160, 320, 480, 640, 800],
   },
   {
-    id: 5, name: 'BLACKOUT', sub: 'the crosshairs cut out — read the hand, not the marker',
+    id: 5, name: 'BLACKOUT', sub: 'The crosshairs cut out. Watch the arm, not the marker.',
     movement: 'slots',
     time: 40, timeOnly: true,
     rail: { min: 90, max: 870 },
@@ -63,7 +63,7 @@ export const LEVELS = [
     slots: [150, 305, 480, 655, 810],
   },
   {
-    id: 6, name: 'CROWDED EDGE', sub: 'two slots come pre-sealed — and the hunter gets faster every strike',
+    id: 6, name: 'CROWDED EDGE', sub: 'Two slots are already taken, and the hunter speeds up with every strike.',
     movement: 'slots',
     time: 35, timeOnly: true,
     rail: { min: 90, max: 870 },
@@ -76,7 +76,7 @@ export const LEVELS = [
     slots: [150, 305, 480, 655, 810],
   },
   {
-    id: 7, name: 'POP QUIZ', sub: 'time freezes, the plug creeps — do the math to unfreeze it',
+    id: 7, name: 'POP QUIZ', sub: 'Time freezes, the plug creeps closer, and there is arithmetic.',
     movement: 'slots',
     time: 35, timeOnly: true,
     rail: { min: 90, max: 870 },
@@ -88,7 +88,7 @@ export const LEVELS = [
     slots: [150, 305, 480, 655, 810],
   },
   {
-    id: 8, name: 'SEAL TEAM', sub: 'free slide — the edge gets sealed; tight dodges reclaim it',
+    id: 8, name: 'SEAL TEAM', sub: 'The edge is being sealed off. Close calls win it back.',
     movement: 'free',
     time: 38, timeOnly: true,
     rail: { min: 90, max: 870 },
@@ -138,10 +138,14 @@ export function buildEndlessRound(round) {
   // (Round 6/14/15 proved loop-1 bonus hands turn scaled duos into attrition.)
   const baseHands = base.hands || [{}];
   const wantHands = Math.min(base.movement === 'slots' ? 2 : 3,
-    baseHands.length + (loop >= 2 ? 1 : 0) + (loop >= 4 ? 1 : 0));
+    // a base pair that already mixes plug personalities waits until loop 4 for a third
+    baseHands.length + (loop >= (baseHands.some(h => h.plug) ? 4 : 2) ? 1 : 0) + (loop >= 4 ? 1 : 0));
   const hands = baseHands.map(h => ({ ...h }));
   while (hands.length < wantHands) {
-    hands.push({ startDelay: 1.2 + hands.length, trackSpeed: Math.round(e.trackSpeed * 0.95) });
+    // the first late joiner is a USB-C jabber (unless one is already here), so a
+    // crowded round mixes rhythms without stacking two quick hands
+    const jab = !hands.some(h => h.plug === 'c');
+    hands.push({ startDelay: 1.2 + hands.length, trackSpeed: Math.round(e.trackSpeed * 0.95), ...(jab ? { plug: 'c' } : {}) });
   }
   // blockers spread to every archetype from loop 2, and intensify
   let blocker = base.blocker ? { ...base.blocker } : null;

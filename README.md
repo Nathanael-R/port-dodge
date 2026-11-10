@@ -1,9 +1,9 @@
 # USB DODGE 🔌💨
 
-**You are a USB port. A human hand is trying to plug into you. Be somewhere else.**
+**You are a USB port. A robot arm is trying to plug into you. Be somewhere else.**
 
 A tiny arcade prototype answering one question: *is it fun to be a USB port
-desperately dodging a human trying to plug something into you?*
+desperately dodging a machine trying to plug something into you?*
 
 ## Run it
 
@@ -32,10 +32,11 @@ npm test             # node --test tests/
 
 ## The game
 
-Side view of a laptop edge. A giant hand grips a USB plug and lunges at you
+Side view of a laptop edge. An industrial robot arm clamps a USB plug and lunges at you
 with a readable cycle: **track → lock (red telegraph) → strike → recover**.
 The strike always lands exactly where it was telegraphed — so every hit is
-your fault and every dodge feels like you tricked the human.
+your fault and every dodge feels like you tricked the machine. (The code still
+calls each attacker a "hand": `hands[]`, `handParams`.)
 
 Levels 1–3 can also be won early by forcing enough misses; **from level 4 on
 the timer is the only exit**, so dodges score points but survival is what
@@ -43,10 +44,10 @@ advances you. Lose a level when all your ports get plugged.
 
 | Level | Twist |
 |---|---|
-| 1 · First Boot | free sliding, one slow human, long telegraphs |
+| 1 · First Boot | free sliding, one slow arm, long telegraphs |
 | 2 · Cornered | no more sliding — teleport between 5 slots; faster hand, occasional double-jabs, and **no panic-hops**: teleports fizzle while a strike is in flight (`TOO LATE!`), so dodges must be committed during the telegraph |
 | 3 · Double Trouble | two ports, one shared command — a dead port's cable becomes a **wall** the survivor can't cross. **Clearing it earns the FLIP-FLOP extra life.** |
-| 4 · Two Hands | two ports vs **two humans** — survive **25s**. Lose one port and *both* hands hunt the survivor, now cornered by its partner's corpse. Your ports hang **upside-down**: the first plug is absorbed (`FLIP SAVED YOU!`) plus 1s of phase-out. Humans also **barricade 20% of the edge** in striped `NOPE` zones |
+| 4 · Two Arms | two ports vs **two arms** with different plugs: a USB‑A **bruiser** (heavy yellow clamp, long wind-up, never doubles) and a late USB‑C **jabber** (slim grey arm, narrow plug, short warning, quick recovery, frequent doubles) — survive **25s**. Lose one port and *both* hands hunt the survivor, now cornered by its partner's corpse. Your ports hang **upside-down**: the first plug is absorbed (`FLIP SAVED YOU!`) plus 1s of phase-out. Humans also **barricade 20% of the edge** in striped `NOPE` zones |
 | 5 · Blackout | back to one port in the slots — survive **40s**, but the hand's **crosshair cuts out at random** (read the fist's drift, not the marker), and **one slot at a time gets seized** (flashing `!` warning, then red `✕`; campers get `EJECTED!` to the safest free slot) |
 | 6 · Crowded Edge | two slots come **pre-sealed** by stuck plugs (always leaving a connected triple), and the lone hunter **accelerates every strike** (track ×1.05, lock ×0.96, capped) — end it quickly |
 | 7 · Pop Quiz | time **freezes** and every plug creeps toward the port you're on — answer the procedurally generated math (**+−×**, infinite variety) to unfreeze for **+50**. Wrong or timeout earns every hand a point-blank 0.35s lock |
@@ -67,7 +68,9 @@ dicey — endless is meant to end your run eventually.
   telegraphs (floor 0.42s), more double-jabs (cap 0.45) and blackouts (cap 0.5),
   fatter plugs (cap 70px)
 - extra hands join later in a run (a second at round 17, a third at round 33;
-  max 3 free / 2 slots), barricades spread to every archetype from round 17
+  max 3 free / 2 slots); the first late joiner is a USB‑C jabber, and the
+  Two Hands pair, which already mixes plugs, waits until round 33 for a third.
+  Barricades spread to every archetype from round 17
 
 Scoring (both modes): **+100** per forced miss, **+150** per near-miss,
 floating `+100` text on every dodge, clear bonus **500 + 100 per
@@ -85,14 +88,14 @@ under 6s) and miss pips; cards dim the stage behind them.
 ## OS flavor
 
 The game sniffs your OS (`src/os.js`: `userAgentData.platform` with UA
-fallback) and reskins around it — parody hardware on the laptop lid, edge
-glow tint, page accent + corner radius, footer one-liner:
+fallback) and adds parody hardware on the laptop lid, a tinted hairline on the
+edge, and a footer one-liner:
 
-| OS | Laptop | Accent |
+| OS | Laptop | Edge tint |
 |---|---|---|
-| mac | ◉ MacLap Pro + traffic lights, "USB-C only · dongles sold separately" | ice blue, extra round, cards get traffic lights |
-| windows | ▦ WinLap 11, "have you tried turning it off and on again" | fluent blue, squarer |
-| linux | `$ penglap — btw`, "i use arch btw · sudo dodge" | terminal green, mono keycaps |
+| mac | MacLap Pro + traffic lights, "USB-C only · dongles sold separately" | ice blue |
+| windows | WinLap 11, "have you tried turning it off and on again" | fluent blue |
+| linux | `$ penglap --btw`, "i use arch btw · sudo dodge" | terminal green |
 
 Preview any flavor with `?os=mac|windows|linux`.
 
@@ -176,9 +179,9 @@ proven and any of those earn their place.
 ## Next mechanics worth exploring
 
 1. Port-switching / split controls for multi-port play (vs. the shared command).
-2. Distinct plug personalities on the two-hand chassis (e.g. a fast USB-C
-   jabber vs. a slow USB-A bruiser — `hands[]` overrides already support this;
-   blackout would suit the jabber).
+2. More plug personalities. USB‑A and USB‑C exist (`handParams` in `logic.js`,
+   a `plug` key on any `hands[]` entry); candidates are a blackout-prone jabber
+   for L5, a micro-USB that only fits one way round, and a Lightning bully.
 3. Narrow-escape slow-mo (near-miss already detected — `resolveStrike` returns `'near'`).
 4. Real player tuning pass: L4's barricades, L5's blackout rate and L8's trim
    pace are sim-fair for perfect play; humans need playtesting. Current
@@ -190,8 +193,14 @@ proven and any of those earn their place.
 
 ## UI polish and rendering pass
 
-The arcade shell now uses charcoal/lime, compact level progress, distinct score and
-dodge counters, short onboarding, result statistics, and mobile-safe overlays.
+The shell is styled as a printed operating manual: warm paper, black ink, and one
+signal orange reserved for danger (the lock reticle, lost ports, the low timer).
+Type is Archivo (condensed for headings and readouts) with IBM Plex Mono for labels,
+loaded from Google Fonts with system fallbacks. The HUD is a ruled readout strip,
+level briefings and results are spec tables, and the menu shows the port and arm as
+an annotated figure. The canvas follows the same palette: a graphite laptop over a
+graph-paper desk, hazard-tape barricades, and floating callouts drawn as solid
+label chips so they read on either surface.
 Pause is available on screen and via P/Esc; Help pauses without discarding the run.
 Menus manage keyboard focus; button feedback and short entrances respect reduced
 motion, which also suppresses camera shake and reduces decorative particles.
